@@ -1,19 +1,32 @@
 (function(){
 "use strict";
-var DATA = window.__DASHBOARD_DATA__;
-var RD = DATA.rdDays;      // [0,1,3,7,14,21,30]
-var RT = DATA.rtDays;      // [1,3,7,14,21,30]
-var WEEKS = DATA.weeks;    // [{s,e,m}]
-var DAYS = DATA.days;      // ["YYYY-MM-DD", ...] sorted
-var CHANNELS = DATA.channels;
-var APPS = DATA.apps;
-var CAMPAIGNS = DATA.campaigns;
-var ROWS = DATA.rows;
-var DAILY = DATA.dailyRows;
-var DATA_END = parseDate(DATA.meta.dateRange[1]);
-var DATA_START = parseDate(DATA.meta.dateRange[0]);
-var DATA_END_STR = DATA.meta.dateRange[1];
-var DATA_START_STR = DATA.meta.dateRange[0];
+// DATA arrives either as a static blob baked in at build time (window.__DASHBOARD_DATA__,
+// used by the Claude Artifact build) or pushed in live later via window.__dashboardSetData()
+// (used when this file is embedded in a Retool custom component driven by a live query).
+// applyDataset()/bootUI() below are split so both paths work without duplicating the file.
+// Fixed cohort-day schema — always this exact shape by construction (see build_dataset.mjs),
+// not derived per-dataset, so these are safe to use at module-eval time before any data arrives.
+var RD = [0, 1, 3, 7, 14, 21, 30];
+var RT = [1, 3, 7, 14, 21, 30];
+
+var DATA, WEEKS, DAYS, CHANNELS, APPS, CAMPAIGNS, ROWS, DAILY,
+  DATA_END, DATA_START, DATA_END_STR, DATA_START_STR;
+
+function applyDataset(dataset){
+  DATA = dataset;
+  WEEKS = DATA.weeks;    // [{s,e,m}]
+  DAYS = DATA.days;      // ["YYYY-MM-DD", ...] sorted
+  CHANNELS = DATA.channels;
+  APPS = DATA.apps;
+  CAMPAIGNS = DATA.campaigns;
+  ROWS = DATA.rows;
+  DAILY = DATA.dailyRows;
+  DATA_END = parseDate(DATA.meta.dateRange[1]);
+  DATA_START = parseDate(DATA.meta.dateRange[0]);
+  DATA_END_STR = DATA.meta.dateRange[1];
+  DATA_START_STR = DATA.meta.dateRange[0];
+}
+if (window.__DASHBOARD_DATA__) applyDataset(window.__DASHBOARD_DATA__);
 
 // weekly-cohort row field indices
 var F_AI=0,F_OS=1,F_CI=2,F_CAMP=3,F_WI=4,F_INS=5,F_COST=6,F_RR=7,F_LR=14,F_RT=21;
@@ -41,9 +54,11 @@ function fmtPct1(n){ if(n==null) return "—"; return (n*100).toFixed(1)+"%"; }
 function esc(s){ return String(s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];}); }
 
 /* ---------------- state ---------------- */
+// When DATA isn't available yet (Retool: data arrives async after the script first runs),
+// these get filled in for real inside applyDataset()'s caller (see __dashboardSetData below).
 var state = {
-  rangeStart: DATA.meta.dateRange[0],
-  rangeEnd: DATA.meta.dateRange[1],
+  rangeStart: DATA ? DATA.meta.dateRange[0] : null,
+  rangeEnd: DATA ? DATA.meta.dateRange[1] : null,
   granularity: "week", // 'week' | 'month'
   minInstalls: 1,
   trailingDays: 3,
@@ -807,16 +822,27 @@ function setExportStatus(msg){
   var el = document.getElementById("simexport-status");
   if(el) el.textContent = msg;
 }
+function downloadViaBlob(filename, csv){
+  var blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  setExportStatus("Saved "+filename);
+}
 async function exportSimCsv(){
   var t = computeSimTotals();
   if(t.items.length===0){ setExportStatus("Nothing selected yet — check a campaign or channel first."); return; }
   var csv = buildSimCsv(t.items);
   var filename = "portfolio-kill-switch-stop-list-"+state.rangeEnd+".csv";
-  if(typeof claude === "undefined" || !claude.use){ setExportStatus("Downloads aren't available in this view."); return; }
+  // claude.use("downloads") is the Claude Artifacts platform API and only exists there; anywhere
+  // else (e.g. this file embedded in a Retool custom component) fall back to a plain Blob download.
+  if(typeof claude === "undefined" || !claude.use){ downloadViaBlob(filename, csv); return; }
   setExportStatus("Preparing download…");
   var downloads;
   try{ downloads = await claude.use("downloads"); } catch(e){ downloads = null; }
-  if(!downloads){ setExportStatus("Downloads aren't available in this view."); return; }
+  if(!downloads){ downloadViaBlob(filename, csv); return; }
   try{
     await downloads.save({ filename: filename, data: csv });
     setExportStatus("Saved "+filename);
@@ -917,21 +943,15 @@ function summaryFootnote(){
 }
 
 /* ---------------- events ---------------- */
-document.addEventListener("DOMContentLoaded", function(){
+// Populates the parts of the DOM that depend on DATA but live outside render()'s #app subtree
+// (the pull-range display + the rangeStart/rangeEnd inputs' bounds). Safe to call repeatedly —
+// once at first boot, and again any time fresh data arrives after that (Retool live refresh).
+function syncPullRangeUI(){
   var minEl = document.getElementById("rangeStart");
   var maxEl = document.getElementById("rangeEnd");
-  minEl.min = DATA.meta.dateRange[0]; minEl.max = DATA.meta.dateRange[1]; minEl.value = state.rangeStart;
-  maxEl.min = DATA.meta.dateRange[0]; maxEl.max = DATA.meta.dateRange[1]; maxEl.value = state.rangeEnd;
-  // native min/max stop the calendar picker itself, but a typed/pasted value can still bypass
-  // that in some browsers — clamp explicitly so the view range can never leave the pull range.
-  minEl.addEventListener("change", function(){
-    var v = clampStr(minEl.value, DATA.meta.dateRange[0], DATA.meta.dateRange[1]);
-    if(v<=maxEl.value){ state.rangeStart=v; minEl.value=v; render(); } else minEl.value=state.rangeStart;
-  });
-  maxEl.addEventListener("change", function(){
-    var v = clampStr(maxEl.value, DATA.meta.dateRange[0], DATA.meta.dateRange[1]);
-    if(v>=minEl.value){ state.rangeEnd=v; maxEl.value=v; render(); } else maxEl.value=state.rangeEnd;
-  });
+  minEl.min = DATA.meta.dateRange[0]; minEl.max = DATA.meta.dateRange[1];
+  maxEl.min = DATA.meta.dateRange[0]; maxEl.max = DATA.meta.dateRange[1];
+  minEl.value = state.rangeStart; maxEl.value = state.rangeEnd;
 
   document.getElementById("pullRangeText").textContent = fmtDateLabel(DATA.meta.dateRange[0])+" – "+fmtDateLabel(DATA.meta.dateRange[1]);
   var refreshedEl = document.getElementById("pullRefreshedText");
@@ -942,6 +962,48 @@ document.addEventListener("DOMContentLoaded", function(){
   } else {
     refreshedEl.textContent = "";
   }
+}
+
+var domReady = false, booted = false;
+document.addEventListener("DOMContentLoaded", function(){
+  domReady = true;
+  if (DATA && !booted) bootUI();
+});
+
+// Called by the Retool custom component wrapper (or anything else pushing data in live)
+// whenever a fresh dataset is available. Safe before or after boot, and safe to call
+// repeatedly — first call boots the UI, later calls just refresh the data and re-render.
+window.__dashboardSetData = function(dataset){
+  var firstTime = !DATA;
+  applyDataset(dataset);
+  if (firstTime){
+    state.rangeStart = DATA.meta.dateRange[0];
+    state.rangeEnd = DATA.meta.dateRange[1];
+    if (domReady) bootUI();
+  } else {
+    // clamp the current view range into the new pull range rather than silently resetting it
+    state.rangeStart = clampStr(state.rangeStart, DATA.meta.dateRange[0], DATA.meta.dateRange[1]);
+    state.rangeEnd = clampStr(state.rangeEnd, DATA.meta.dateRange[0], DATA.meta.dateRange[1]);
+    syncPullRangeUI();
+    render();
+  }
+};
+
+function bootUI(){
+  booted = true;
+  syncPullRangeUI();
+  var minEl = document.getElementById("rangeStart");
+  var maxEl = document.getElementById("rangeEnd");
+  // native min/max stop the calendar picker itself, but a typed/pasted value can still bypass
+  // that in some browsers — clamp explicitly so the view range can never leave the pull range.
+  minEl.addEventListener("change", function(){
+    var v = clampStr(minEl.value, DATA.meta.dateRange[0], DATA.meta.dateRange[1]);
+    if(v<=maxEl.value){ state.rangeStart=v; minEl.value=v; render(); } else minEl.value=state.rangeStart;
+  });
+  maxEl.addEventListener("change", function(){
+    var v = clampStr(maxEl.value, DATA.meta.dateRange[0], DATA.meta.dateRange[1]);
+    if(v>=minEl.value){ state.rangeEnd=v; maxEl.value=v; render(); } else maxEl.value=state.rangeEnd;
+  });
 
   document.getElementById("minInstalls").addEventListener("input", function(e){
     var v = parseInt(e.target.value,10); state.minInstalls = isNaN(v)?0:Math.max(0,v); render();
@@ -1023,10 +1085,10 @@ document.addEventListener("DOMContentLoaded", function(){
       render(); return;
     }
   });
-  render();
   document.body.addEventListener("click", function(e){
     var b=e.target.closest("[data-summary-os] [data-os]");
     if(b){ state.summaryOS = b.getAttribute("data-os"); render(); }
   });
-});
+  render();
+}
 })();

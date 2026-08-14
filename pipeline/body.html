@@ -1,0 +1,89 @@
+<title>Portfolio Kill Switch</title>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand-row">
+      <div class="brand">
+        <h1>Portfolio Kill Switch</h1>
+        <span class="sub">Nova Solitaire · Nut Sort · Seek &amp; Find · Zen Solitaire — UA channel &amp; campaign triage</span>
+      </div>
+      <div class="controls">
+        <div class="ctrl">
+          <label>Date range</label>
+          <div class="row">
+            <input type="date" id="rangeStart" />
+            <span style="color:var(--ink-soft)">–</span>
+            <input type="date" id="rangeEnd" />
+          </div>
+        </div>
+        <div class="ctrl">
+          <label>Granularity</label>
+          <div class="seg">
+            <button data-gran="week" class="active">Week</button>
+            <button data-gran="month">Month</button>
+          </div>
+        </div>
+        <div class="ctrl">
+          <label>Min installs / week</label>
+          <input type="number" id="minInstalls" min="0" value="1" />
+        </div>
+        <div class="ctrl">
+          <label>Trailing days (Stop Simulator)</label>
+          <input type="number" id="trailingDays" min="1" max="14" value="3" />
+        </div>
+        <div class="ctrl rules-pop">
+          <label>&nbsp;</label>
+          <button class="btn-ghost" id="rulesToggle">Stop / Scale rules ▾</button>
+          <div class="rules-panel" id="rulesPanel">
+            <h4>Verdict thresholds (D30 ad RoAS)</h4>
+            <div class="rules-line"><span>Stop below</span><input type="number" id="stopThresh" value="70" step="5" />%</div>
+            <div class="rules-line"><span>Scale at / above</span><input type="number" id="scaleThresh" value="100" step="5" />%</div>
+            <p class="rules-note">The Verdict badge is D30 ad RoAS (observed once matured, otherwise its running estimate). Below "Stop" → not profitable. Between the two → Watch (possible breakeven). At/above "Scale" → profitable, safe to push more budget. The "Trailing days" field above only controls the Stop Simulator's daily spend/revenue window at the bottom of the page.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="pullinfo">
+      <span class="pullinfo-label">Adjust data pulled through</span>
+      <span class="pullinfo-range" id="pullRangeText">—</span>
+      <span class="pullinfo-sep">·</span>
+      <span id="pullRefreshedText">—</span>
+      <button class="btn-ghost btn-tiny" id="refreshInfoBtn" title="This page can't call Adjust directly (browsers block that for published pages, and the API key can't live in client code). Data refreshes automatically once a day — ask Claude in your session if you need it sooner.">Refresh ⓘ</button>
+    </div>
+    <div id="tabbar-slot"></div>
+  </div>
+</div>
+
+<div class="shell">
+  <div id="app"></div>
+</div>
+
+<button class="sim-toggle" id="simtoggle" hidden>Stop list <span class="count">0</span></button>
+<div class="simbar" id="simbar">
+  <div class="simbar-head">
+    <span class="lbl" id="sim-count">0 items selected to stop</span>
+    <div class="simbar-actions">
+      <span class="lbl" id="simexport-status"></span>
+      <button class="btn-ghost" id="simexport">Export CSV</button>
+      <button class="btn-ghost" id="simclear">Unselect All</button>
+      <button class="btn-ghost" id="simclose">Hide</button>
+    </div>
+  </div>
+  <div class="simtotals">
+    <div class="simstat total">
+      <span class="lbl">Total daily spend drop</span>
+      <span class="val drop" id="sim-dailyspend">$0/day</span>
+      <span class="lbl sub" id="sim-spend">≈ $0 over selected range</span>
+    </div>
+    <div class="simstat total">
+      <span class="lbl">Total daily revenue drop</span>
+      <span class="val drop" id="sim-dailyrev0">$0/day</span>
+      <span class="lbl sub" id="sim-rev0">≈ $0 over selected range</span>
+    </div>
+    <div class="simstat">
+      <span class="lbl">Blended run-rate (rev ÷ spend)</span>
+      <span class="val" id="sim-roas">—</span>
+    </div>
+  </div>
+  <div class="simlist" id="sim-breakdown"></div>
+</div>

@@ -174,11 +174,9 @@ function dailyLeafRows(appIdx, osFilter, ci, campIdx, dStart, dEnd){
   return out;
 }
 
-// Status badge: Live only if spend > 0 on EACH of the last 2 calendar days of the row's
-// window (clipped to available data + the selected range) — any single day with zero spend,
-// even a gap in the middle, is Paused. For the most recent (partial) week that's Aug 10 & 11;
-// for an older week it's that week's own last 2 days.
-var STATUS_WINDOW = 2;
+// Status badge: Live only if spend > 0 on D-1 (the row window's own last calendar day,
+// clipped to available data + the selected range) — a single day's spend decides it.
+var STATUS_WINDOW = 1;
 function computeStatus3d(appIdx, osFilter, ci, campIdx, winStart, winEnd){
   var clipStart = clampStr(winStart, state.rangeStart, state.rangeEnd);
   var clipEnd = clampStr(winEnd, state.rangeStart, state.rangeEnd);
@@ -206,7 +204,7 @@ function statusBadgeHTML(s){
   var label = s.status==="live" ? "LIVE" : "PAUSED";
   var cls = s.status==="live" ? "live" : "paused";
   var title = "Last "+s.days.length+" day(s): "+s.days.map(function(x){ return fmtDateLabel(x.date)+" "+fmtMoney2(x.cost); }).join(" · ")
-    + (s.status==="paused" ? " — at least one day with $0 spend breaks the streak" : " — spend every day");
+    + (s.status==="paused" ? " — $0 spend" : " — spend > $0");
   return '<span class="badge '+cls+'" title="'+esc(title)+'">'+label+'</span>';
 }
 
@@ -254,7 +252,7 @@ function badgeHTML(v){
   return '<span class="badge '+m[1]+'" title="'+esc(title)+'">'+m[0]+suffix+'</span>';
 }
 function pausedBadgeHTML(status){
-  return '<span class="badge paused" title="Paused — no spend on the last '+(status.days.length||2)+' day(s) checked, so the RoAS verdict is on hold">PAUSED</span>';
+  return '<span class="badge paused" title="Paused — no spend on the last '+(status.days.length||1)+' day(s) checked, so the RoAS verdict is on hold">PAUSED</span>';
 }
 // Once D30 itself is mature, behaves exactly like d30Verdict. Until then, use the predicted
 // D30 (chained from the last observed day via that row's RoAS-multiplier cells) instead of
@@ -936,10 +934,10 @@ function colChip(key,label){
   return '<label class="chip-toggle'+(on?" on":"")+'"><input type="checkbox" data-colgroup="'+key+'" '+(on?"checked":"")+'/>'+label+'</label>';
 }
 function footnote(){
-  return '<div class="footnote">Spend source: <code>mixed</code> (Adjust attributed + network-reported). Ad revenue source: <code>AppLovin Max + S2S Ad Revenue</code> only. The <b>Status</b> badge is Live only if spend was &gt;$0 on both of the last 2 calendar days of that row\'s window (a single $0 day — even a gap in the middle — flags it Paused); hover it for the exact daily figures. The <b>Verdict</b> badge is D30 ad RoAS for that row within the selected date range — shown as "observed" once the cohort has fully matured, or as an in-progress estimate (hover the badge for the exact figure) when it hasn\'t yet — <b>unless</b> Status is Paused, in which case Verdict shows Paused too rather than a stale RoAS call on something that isn\'t currently spending. Cells prefixed <code>~</code> in the RoAS/Retention/LTV columns are similarly still maturing as of '+fmtDateLabel(DATA.meta.dateRange[1])+'. Click any column header in the frozen row to sort by it (click again to flip direction) — applies within whichever level you\'re looking at (channels, or the campaigns under an expanded channel, or the weeks/months under an expanded campaign). The <b>D30</b> column under RoAS · Ad is always the actual, raw figure Adjust reports — never touched by the multiplier edits. The separate <b>Predicted</b> column right after it shows only the projection, chained from the last observed day via the <b>RoAS Multiplier</b> cells further right — solid border where a multiplier is observed real data, dashed amber where it isn\'t: on week/month rows that\'s the average of the last up to 3 periods that did have it mature; on channel/campaign rows (which span many weeks at once) it\'s the average across every week in the selected range that had it mature. Every multiplier cell is editable; type your own number to watch the Predicted column — and the Verdict badge, if that row\'s own D30 isn\'t mature yet — update live. A small ↺ appears next to any row\'s name once you\'ve edited it — click it to clear just that row\'s overrides; "Reset ALL RoAS × overrides" up top clears every row at once. The Stop Simulator below uses a separate, more current figure — see its own note.</div>';
+  return '<div class="footnote">Spend source: <code>mixed</code> (Adjust attributed + network-reported). Ad revenue source: <code>AppLovin Max + S2S Ad Revenue</code> only. The <b>Status</b> badge is Live only if spend was &gt;$0 on D-1 (the last calendar day of that row\'s window); a $0 day flags it Paused — hover it for the exact figure. The <b>Verdict</b> badge is D30 ad RoAS for that row within the selected date range — shown as "observed" once the cohort has fully matured, or as an in-progress estimate (hover the badge for the exact figure) when it hasn\'t yet — <b>unless</b> Status is Paused, in which case Verdict shows Paused too rather than a stale RoAS call on something that isn\'t currently spending. Cells prefixed <code>~</code> in the RoAS/Retention/LTV columns are similarly still maturing as of '+fmtDateLabel(DATA.meta.dateRange[1])+'. Click any column header in the frozen row to sort by it (click again to flip direction) — applies within whichever level you\'re looking at (channels, or the campaigns under an expanded channel, or the weeks/months under an expanded campaign). The <b>D30</b> column under RoAS · Ad is always the actual, raw figure Adjust reports — never touched by the multiplier edits. The separate <b>Predicted</b> column right after it shows only the projection, chained from the last observed day via the <b>RoAS Multiplier</b> cells further right — solid border where a multiplier is observed real data, dashed amber where it isn\'t: on week/month rows that\'s the average of the last up to 3 periods that did have it mature; on channel/campaign rows (which span many weeks at once) it\'s the average across every week in the selected range that had it mature. Every multiplier cell is editable; type your own number to watch the Predicted column — and the Verdict badge, if that row\'s own D30 isn\'t mature yet — update live. A small ↺ appears next to any row\'s name once you\'ve edited it — click it to clear just that row\'s overrides; "Reset ALL RoAS × overrides" up top clears every row at once. The Stop Simulator below uses a separate, more current figure — see its own note.</div>';
 }
 function summaryFootnote(){
-  return '<div class="footnote">Verdict per channel = D30 ad RoAS (observed once the cohort has fully matured, otherwise a predicted D30 — marked "(pred.)" below — chained from the last mature day via that channel\'s own RoAS-multiplier averages; a bare "—" means not even that could be computed), rolled up across every campaign on that channel within the selected date range — unless the channel is Paused (no spend on both of the last 2 days), in which case it\'s bucketed as Paused instead of Stop/Watch/Scale. Rule: RoAS <'+Math.round(state.stopThresh*100)+'% → Stop, '+Math.round(state.stopThresh*100)+'–'+Math.round(state.scaleThresh*100)+'% → Watch, ≥'+Math.round(state.scaleThresh*100)+'% → Scale. Adjust the thresholds from the “Rules” control in the top bar. The Stop Simulator (bottom bar, once you check items) instead totals the trailing '+state.trailingDays+'-day average daily spend and average daily <em>non-cohorted</em> ad revenue for whatever you\'ve selected — a live, current-run-rate view rather than a cohort estimate.</div>';
+  return '<div class="footnote">Verdict per channel = D30 ad RoAS (observed once the cohort has fully matured, otherwise a predicted D30 — marked "(pred.)" below — chained from the last mature day via that channel\'s own RoAS-multiplier averages; a bare "—" means not even that could be computed), rolled up across every campaign on that channel within the selected date range — unless the channel is Paused (no spend on D-1), in which case it\'s bucketed as Paused instead of Stop/Watch/Scale. Rule: RoAS <'+Math.round(state.stopThresh*100)+'% → Stop, '+Math.round(state.stopThresh*100)+'–'+Math.round(state.scaleThresh*100)+'% → Watch, ≥'+Math.round(state.scaleThresh*100)+'% → Scale. Adjust the thresholds from the “Rules” control in the top bar. The Stop Simulator (bottom bar, once you check items) instead totals the trailing '+state.trailingDays+'-day average daily spend and average daily <em>non-cohorted</em> ad revenue for whatever you\'ve selected — a live, current-run-rate view rather than a cohort estimate.</div>';
 }
 
 /* ---------------- events ---------------- */
@@ -964,11 +962,17 @@ function syncPullRangeUI(){
   }
 }
 
-var domReady = false, booted = false;
-document.addEventListener("DOMContentLoaded", function(){
-  domReady = true;
-  if (DATA && !booted) bootUI();
-});
+// document.readyState is already past "loading" whenever this script is injected dynamically
+// after page load (e.g. a Retool custom component mounting it at runtime) — DOMContentLoaded
+// will never fire again in that case, so treat an already-ready document as ready immediately.
+var domReady = (document.readyState !== "loading");
+var booted = false;
+if (!domReady) {
+  document.addEventListener("DOMContentLoaded", function(){
+    domReady = true;
+    if (DATA && !booted) bootUI();
+  });
+}
 
 // Called by the Retool custom component wrapper (or anything else pushing data in live)
 // whenever a fresh dataset is available. Safe before or after boot, and safe to call

@@ -1237,23 +1237,32 @@ function pacingTargetHTML(scopeKey, row){
   return '<input type="number" step="any" class="pacing-target" data-pacingtarget="'+esc(key)+'" value="'+(val===""?"":val)+'" placeholder="—">';
 }
 function isPacingCurrentMonth(m){ return m === DATA_END_STR.slice(0,7); }
+// Full label (used in the %Change dropdowns, which aren't a two-row table header).
 function fmtDayHeaderLabel(s){
   var d = parseDate(s);
   return d.toLocaleDateString("en-US",{weekday:"short",timeZone:"UTC"})+" "+d.getUTCDate()+" "+d.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"});
 }
+// Split for the table's own two-row day header: weekday on top, date below.
+function fmtDayWeekday(s){ return parseDate(s).toLocaleDateString("en-US",{weekday:"short",timeZone:"UTC"}); }
+function fmtDayDateOnly(s){ var d=parseDate(s); return d.getUTCDate()+" "+d.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"}); }
 function renderPacingTable(scopeKey, appIdx, osFilter, ci){
-  var daily = buildPacingSeries(appIdx, osFilter, ci);
+  var daily = buildPacingSeries(appIdx, osFilter, ci); // stays chronological — cumulative math needs it
   if(daily.length===0) return '<div class="empty-note">No spend/revenue activity in this scope for the selected range.</div>';
   var monthly = buildPacingMonthly(daily);
-  var cols = pacingAllColumns(monthly, daily);
+  var displayDaily = daily.slice().reverse(); // latest day first, so it's right next to Target — no long scroll to "today"
+  var cols = pacingAllColumns(monthly, displayDaily);
   var sel = pacingCompareSelection(scopeKey, cols);
   var colA = cols.find(function(c){ return c.id===sel.a; });
   var colB = cols.find(function(c){ return c.id===sel.b; });
 
-  var head = '<thead><tr><th class="namecol">Metric</th>';
+  var head = '<thead><tr class="grp"><th class="namecol"></th>';
+  monthly.forEach(function(){ head += '<th></th>'; });
+  head += '<th></th><th></th>';
+  displayDaily.forEach(function(d,i){ head += '<th class="pacing-day num'+(i===0?" pacing-divider":"")+'">'+esc(fmtDayWeekday(d.day))+'</th>'; });
+  head += '</tr><tr class="day"><th class="namecol">Metric</th>';
   monthly.forEach(function(m){ head += '<th class="pacing-month num">'+esc(fmtMonthLabel(m.month))+(isPacingCurrentMonth(m.month)?"*":"")+'</th>'; });
   head += '<th class="num">%Change</th><th class="num">Target</th>';
-  daily.forEach(function(d,i){ head += '<th class="pacing-day num'+(i===0?" pacing-divider":"")+'">'+esc(fmtDayHeaderLabel(d.day))+'</th>'; });
+  displayDaily.forEach(function(d,i){ head += '<th class="pacing-day num'+(i===0?" pacing-divider":"")+'">'+esc(fmtDayDateOnly(d.day))+'</th>'; });
   head += '</tr></thead>';
 
   var body = '<tbody>';
@@ -1262,7 +1271,7 @@ function renderPacingTable(scopeKey, appIdx, osFilter, ci){
     monthly.forEach(function(m){ body += '<td class="num">'+pacingFmt(row, m[PACING_FIELD_MONTHLY[row.key]])+'</td>'; });
     body += '<td class="num">'+pacingChangeHTML(row, colA, colB)+'</td>';
     body += '<td class="num">'+pacingTargetHTML(scopeKey, row)+'</td>';
-    daily.forEach(function(d,i){ body += '<td class="num'+(i===0?" pacing-divider":"")+'">'+pacingFmt(row, d[PACING_FIELD_DAILY[row.key]])+'</td>'; });
+    displayDaily.forEach(function(d,i){ body += '<td class="num'+(i===0?" pacing-divider":"")+'">'+pacingFmt(row, d[PACING_FIELD_DAILY[row.key]])+'</td>'; });
     body += '</tr>';
   });
   body += '</tbody>';

@@ -385,10 +385,15 @@ function chainPredictedD30(d, hops){
 
 // Walks a chronological list of {d:...} period objects once, resolving each hop for each
 // period to: a user override, else its own observed multiplier if that hop is mature for this
-// period, else the average of the same hop's observed multiplier from the last 3 EARLIER
-// periods that had it mature. Also computes the chained D30 prediction from the last mature day.
+// period, else a SPEND-WEIGHTED average of the same hop from the last 3 EARLIER periods that had
+// it mature. Spend-weighted means: rather than averaging the 3 periods' ratios equally, sum the
+// revenue at the "to" cohort day and the revenue at the "from" cohort day separately across those
+// periods (each period's own cost implicitly weights its contribution, exactly like every other
+// weighted-aggregation in this file — see aggregateRows/deriveCohortMetrics), then take ONE ratio
+// of the two sums. A period with $50k of spend behind its multiplier should count far more than
+// one with $50. Also computes the chained D30 prediction from the last mature day.
 function computePeriodMultipliers(periods, seriesKey){
-  var history = HOPS.map(function(){ return []; }); // per-hop rolling list of observed multipliers, chronological
+  var history = HOPS.map(function(){ return []; }); // per-hop rolling list of {revTo,revFrom}, chronological
   periods.forEach(function(p){
     var d = p.d;
     var hops = HOPS.map(function(hop, k){
@@ -402,10 +407,14 @@ function computePeriodMultipliers(periods, seriesKey){
       else if(mature && actual!=null){ value = actual; source = "observed"; }
       else {
         var hist = history[k].slice(-3);
-        value = hist.length ? (hist.reduce(function(a,b){return a+b;},0)/hist.length) : null;
+        var sumTo=0, sumFrom=0;
+        hist.forEach(function(h){ sumTo+=h.revTo; sumFrom+=h.revFrom; });
+        value = (hist.length && sumFrom>0) ? sumTo/sumFrom : null;
         source = hist.length ? "estimated" : "nodata";
       }
-      if(mature && actual!=null) history[k].push(actual); // feed future fallback from TRUE observations only
+      // feed future fallback from TRUE observations only, as revenue amounts (not the bare
+      // ratio) so a later spend-weighted blend can be reconstructed from them.
+      if(mature && actual!=null && d.cost>0) history[k].push({ revTo: d.roas[toIdx]*d.cost, revFrom: d.roas[fromIdx]*d.cost });
       return { key:overrideKey, value:value, mature:mature, source:source, label:HOP_LABELS[k] };
     });
     p.hops = hops;
@@ -439,13 +448,17 @@ function computeRollupMultipliers(appIdx, osFilter, ci, campIdx){
   var rows = leafRows(appIdx, osFilter, ci, campIdx);
   var byWeek = new Map();
   rows.forEach(function(r){ var wi=r[F_WI]; if(!byWeek.has(wi)) byWeek.set(wi, []); byWeek.get(wi).push(r); });
-  var sums = HOPS.map(function(){ return { sum:0, n:0 }; });
+  // Spend-weighted, same technique as computePeriodMultipliers: sum each mature week's revenue
+  // at the "to"/"from" cohort days (which implicitly weights each week by its own cost) rather
+  // than averaging the weeks' ratios equally.
+  var sums = HOPS.map(function(){ return { revTo:0, revFrom:0, n:0 }; });
   byWeek.forEach(function(weekRows){
     var wd = deriveCohortMetrics(aggregateRows(weekRows));
     HOPS.forEach(function(hop, k){
       var fromIdx=hop[0], toIdx=hop[1];
-      if(wd.roasMature[toIdx] && wd.roas[fromIdx]!=null && wd.roas[fromIdx]>0 && wd.roas[toIdx]!=null){
-        sums[k].sum += wd.roas[toIdx]/wd.roas[fromIdx];
+      if(wd.roasMature[toIdx] && wd.roas[fromIdx]!=null && wd.roas[fromIdx]>0 && wd.roas[toIdx]!=null && wd.cost>0){
+        sums[k].revTo += wd.roas[toIdx]*wd.cost;
+        sums[k].revFrom += wd.roas[fromIdx]*wd.cost;
         sums[k].n++;
       }
     });
@@ -455,7 +468,7 @@ function computeRollupMultipliers(appIdx, osFilter, ci, campIdx){
     var s = sums[k];
     var overrideKey = keyBase+":"+k;
     var overridden = state.multiplierOverrides.has(overrideKey);
-    var avg = s.n ? s.sum/s.n : null;
+    var avg = (s.n && s.revFrom>0) ? s.revTo/s.revFrom : null;
     var value = overridden ? state.multiplierOverrides.get(overrideKey) : avg;
     var source = overridden ? "override" : (s.n ? "observed-avg" : "nodata");
     return { key:overrideKey, value:value, mature: s.n>0, source:source, label:HOP_LABELS[k], n:s.n };

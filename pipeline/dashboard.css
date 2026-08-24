@@ -1,6 +1,6 @@
 /* ---------- tokens ---------- */
 :root{
-  --ink:#12181f; --ink-soft:#4b5563; --paper:#eef1f4; --surface:#ffffff; --surface-2:#f6f8fa;
+  --ink:#12181f; --ink-soft:#4b5563; --paper:#eef1f4; --paper-2:#e4e8ec; --surface:#ffffff; --surface-2:#f6f8fa;
   --line:#dde3e8; --line-soft:#e8ecf0;
   --accent:#0f766e; --accent-ink:#ffffff; --accent-soft:#e3f2ef; --accent-soft-line:#bfe3dd;
   --stop:#c8323a; --stop-soft:#fbe6e7; --stop-line:#f0b9bd;
@@ -15,7 +15,7 @@
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --ink:#e7ecf1; --ink-soft:#9aa5b1; --paper:#0c1015; --surface:#12171e; --surface-2:#161c24;
+    --ink:#e7ecf1; --ink-soft:#9aa5b1; --paper:#0c1015; --paper-2:#090c10; --surface:#12171e; --surface-2:#161c24;
     --line:#232b34; --line-soft:#1b222b;
     --accent:#2dd4bf; --accent-ink:#04211d; --accent-soft:#122824; --accent-soft-line:#1f4640;
     --stop:#ff7a7e; --stop-soft:#2a1517; --stop-line:#5a2226;
@@ -26,7 +26,7 @@
   }
 }
 :root[data-theme="dark"]{
-  --ink:#e7ecf1; --ink-soft:#9aa5b1; --paper:#0c1015; --surface:#12171e; --surface-2:#161c24;
+  --ink:#e7ecf1; --ink-soft:#9aa5b1; --paper:#0c1015; --paper-2:#090c10; --surface:#12171e; --surface-2:#161c24;
   --line:#232b34; --line-soft:#1b222b;
   --accent:#2dd4bf; --accent-ink:#04211d; --accent-soft:#122824; --accent-soft-line:#1f4640;
   --stop:#ff7a7e; --stop-soft:#2a1517; --stop-line:#5a2226;
@@ -154,10 +154,16 @@ table.dt tbody td.namecell{ position:sticky; left:0; background:var(--surface); 
 table.dt tbody tr:hover td{ background:var(--surface-2); }
 table.dt tbody tr:hover td.namecell{ background:var(--surface-2); }
 table.dt td.grpstart, table.dt th.grpstart{ border-left:1px solid var(--line-soft); }
-table.dt tbody tr.lvl-campaign td.namecell{ background:var(--surface-2); }
-table.dt tbody tr.lvl-campaign:hover td.namecell{ background:var(--surface-2); filter:brightness(1.03); }
-table.dt tbody tr.lvl-period td.namecell{ background:var(--paper); }
-table.dt tbody tr.lvl-day td.namecell{ background:var(--paper); }
+/* Each drill-down level gets its own background across the FULL row, not just the sticky name
+   column — with only the name column tinted, every level looked identical once you scrolled
+   into the data columns (RoAS, multipliers, etc.), which was the actual source of "campaign,
+   week, and day all look the same". Four levels, four increasingly-recessed tones. */
+table.dt tbody tr.lvl-campaign td{ background:var(--surface-2); }
+table.dt tbody tr.lvl-campaign:hover td{ filter:brightness(1.03); }
+table.dt tbody tr.lvl-period td{ background:var(--paper); }
+table.dt tbody tr.lvl-period:hover td{ filter:brightness(1.04); }
+table.dt tbody tr.lvl-day td{ background:var(--paper-2); }
+table.dt tbody tr.lvl-day:hover td{ filter:brightness(1.06); }
 
 .namewrap{ display:flex; align-items:center; gap:6px; }
 .indent-0{ padding-left:0; } .indent-1{ padding-left:20px; } .indent-2{ padding-left:40px; } .indent-3{ padding-left:60px; }

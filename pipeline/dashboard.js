@@ -412,6 +412,24 @@ function computePeriodMultipliers(periods, seriesKey){
   return periods;
 }
 
+// Verdict basis for a channel/campaign rollup: the last 2 MATURED weeks only (within the
+// currently selected range), never a prediction and never the full-range blend — a stop/keep
+// call should reflect solid, recent, real performance. Falls back to just 1 matured week if
+// that's all there is, or "no data" if none. Only the verdict badge uses this; every other
+// displayed metric (Installs, Spend, RoAS trend, etc.) still reflects the full selected range.
+function computeVerdictBasis(appIdx, osFilter, ci, campIdx){
+  var rows = leafRows(appIdx, osFilter, ci, campIdx);
+  var byWeek = new Map();
+  rows.forEach(function(r){ var wi=r[F_WI]; if(!byWeek.has(wi)) byWeek.set(wi, []); byWeek.get(wi).push(r); });
+  var maturedWis = [...byWeek.keys()].filter(function(wi){
+    return deriveCohortMetrics(aggregateRows(byWeek.get(wi))).roasMature[D30_IDX];
+  }).sort(function(a,b){ return b-a; }); // most recent matured week first
+  var lastTwo = maturedWis.slice(0,2);
+  var basisRows = [];
+  lastTwo.forEach(function(wi){ basisRows = basisRows.concat(byWeek.get(wi)); });
+  return deriveCohortMetrics(aggregateRows(basisRows));
+}
+
 // Channel/campaign rollup rows span many weeks at once, so there's no single "this period's own
 // multiplier" — instead each hop is the average of that hop's ACTUAL (mature-only) multiplier
 // across every week in the currently selected range that has it. Editable, same override map.
@@ -555,12 +573,24 @@ function sortValue(key, d, status, predictedD30){
   if(key.indexOf("ltv_")===0){ var idx=RD.indexOf(+key.slice(4)); return idx>=0?d.ltv[idx]:null; }
   return null;
 }
-// arr: [{d, status, predictedD30, ...}]; mutates in place, nulls always sink to the bottom regardless of direction
-function sortRows(arr){
+// arr: [{d, status, predictedD30, verdictD, ...}] (verdictD only present on channel/campaign
+// objs — see computeVerdictBasis). Live-status rows always come first as a standing rule,
+// regardless of which column (if any) is actively sorted; the active sort (or the cost-desc
+// default when none is active) only decides order WITHIN each of the Live / non-Live groups.
+// Sorting specifically by "verdict" uses each row's verdictD (last-2-matured-weeks basis) so the
+// sort order matches what the verdict badge actually shows; every other column uses the regular
+// full-range d. Mutates in place; nulls always sink to the bottom regardless of direction.
+function sortRowsPinLive(arr){
   var sort = state.sort;
-  if(!sort || !sort.key) return;
   arr.sort(function(a,b){
-    var va = sortValue(sort.key, a.d, a.status, a.predictedD30), vb = sortValue(sort.key, b.d, b.status, b.predictedD30);
+    var la = a.status.status==="live" ? 0 : 1;
+    var lb = b.status.status==="live" ? 0 : 1;
+    if(la !== lb) return la-lb;
+    if(!sort || !sort.key) return 0; // preserve the cost-desc default order already applied
+    var isVerdict = sort.key==="verdict";
+    var da = isVerdict ? a.verdictD : a.d, db = isVerdict ? b.verdictD : b.d;
+    var pa = isVerdict ? null : a.predictedD30, pb = isVerdict ? null : b.predictedD30;
+    var va = sortValue(sort.key, da, a.status, pa), vb = sortValue(sort.key, db, b.status, pb);
     if(va==null && vb==null) return 0;
     if(va==null) return 1;
     if(vb==null) return -1;
@@ -595,10 +625,10 @@ function renderAppTable(appIdx, osFilter){
     var d = deriveCohortMetrics(aggregateRows(leafRows(appIdx, osFilter, ci, null)));
     var status = computeStatus3d(appIdx, osFilter, ci, null, state.rangeStart, state.rangeEnd);
     var hops = computeRollupMultipliers(appIdx, osFilter, ci, null);
-    return { ci:ci, d:d, status:status, hops:hops, predictedD30: chainPredictedD30(d, hops) };
+    return { ci:ci, d:d, status:status, hops:hops, predictedD30: chainPredictedD30(d, hops), verdictD: computeVerdictBasis(appIdx, osFilter, ci, null) };
   });
   channelObjs.sort(function(a,b){ return b.d.cost - a.d.cost; }); // default order
-  sortRows(channelObjs); // overrides default order if a column sort is active
+  sortRowsPinLive(channelObjs); // Live channels always first; column sort (if any) applies within each group
 
   var rows = [];
   channelObjs.forEach(function(co){
@@ -615,7 +645,7 @@ function renderAppTable(appIdx, osFilter){
         resetRowBtnHTML(chResetPrefix, CHANNELS[ci])+
       '</div></td>'+
       '<td>'+statusBadgeHTML(chStatus)+'</td>'+
-      '<td>'+verdictBadgeHTML(d, chStatus, co.predictedD30)+'</td>'+
+      '<td>'+verdictBadgeHTML(co.verdictD, chStatus, null)+'</td>'+
       metricCellsHTML(d, co.predictedD30, co.hops)+
       '<td class="dash">—</td>'+
     '</tr>');
@@ -625,10 +655,10 @@ function renderAppTable(appIdx, osFilter){
         var cd = deriveCohortMetrics(aggregateRows(leafRows(appIdx, osFilter, ci, campIdx)));
         var cStatus = computeStatus3d(appIdx, osFilter, ci, campIdx, state.rangeStart, state.rangeEnd);
         var chops = computeRollupMultipliers(appIdx, osFilter, ci, campIdx);
-        return { campIdx:campIdx, d:cd, status:cStatus, hops:chops, predictedD30: chainPredictedD30(cd, chops) };
+        return { campIdx:campIdx, d:cd, status:cStatus, hops:chops, predictedD30: chainPredictedD30(cd, chops), verdictD: computeVerdictBasis(appIdx, osFilter, ci, campIdx) };
       });
       campObjs.sort(function(a,b){ return b.d.cost - a.d.cost; });
-      sortRows(campObjs);
+      sortRowsPinLive(campObjs); // Live campaigns always first; column sort (if any) applies within each group
       campObjs.forEach(function(co2){
         var campIdx=co2.campIdx, cd=co2.d, cStatus=co2.status;
         var campKey = appIdx+":camp:"+ci+":"+campIdx;
@@ -642,7 +672,7 @@ function renderAppTable(appIdx, osFilter){
             resetRowBtnHTML(campResetPrefix, CAMPAIGNS[campIdx])+
           '</div></td>'+
           '<td>'+statusBadgeHTML(cStatus)+'</td>'+
-          '<td>'+verdictBadgeHTML(cd, cStatus, co2.predictedD30)+'</td>'+
+          '<td>'+verdictBadgeHTML(co2.verdictD, cStatus, null)+'</td>'+
           metricCellsHTML(cd, co2.predictedD30, co2.hops)+
           '<td class="dash">—</td>'+
         '</tr>');
@@ -651,8 +681,8 @@ function renderAppTable(appIdx, osFilter){
           var periodObjs = periods.map(function(p){
             return { p:p, d:p.d, status: computeStatus3d(appIdx, osFilter, ci, campIdx, p.winStart, p.winEnd), predictedD30: p.predictedD30 };
           });
-          // default order is already chronological (from buildPeriods); only re-sort if a column sort is active
-          sortRows(periodObjs);
+          // periods always stay chronological — column sorting never reorders weeks/months (unlike
+          // channel/campaign rows), since a shuffled timeline defeats the point of a trend view.
           var periodSeriesKey = appIdx+":"+ci+":"+campIdx+":"+state.granularity;
           var isWeekGran = state.granularity==="week";
           var prev=null;
@@ -680,7 +710,7 @@ function renderAppTable(appIdx, osFilter){
               var dayObjs = dayPeriods.map(function(dp){
                 return { p:dp, d:dp.d, status: computeStatus3d(appIdx, osFilter, ci, campIdx, dp.winStart, dp.winEnd), predictedD30: dp.predictedD30 };
               });
-              sortRows(dayObjs);
+              // same rule as periods: days always stay chronological, never sorted by a column.
               var dprev = null;
               dayObjs.forEach(function(dpo){
                 var dp=dpo.p, dStatus=dpo.status;
@@ -774,10 +804,9 @@ function renderKpis(appIdx, osFilter){
   var channels = distinctChannelsForApp(appIdx, osFilter);
   var counts = {stop:0,watch:0,scale:0,nodata:0,paused:0};
   channels.forEach(function(ci){
-    var cd = deriveCohortMetrics(aggregateRows(leafRows(appIdx,osFilter,ci,null)));
     var st = computeStatus3d(appIdx, osFilter, ci, null, state.rangeStart, state.rangeEnd);
-    var pred = chainPredictedD30(cd, computeRollupMultipliers(appIdx, osFilter, ci, null));
-    counts[effectiveVerdictKey(cd, st, pred)]++;
+    var verdictD = computeVerdictBasis(appIdx, osFilter, ci, null);
+    counts[effectiveVerdictKey(verdictD, st, null)]++;
   });
   var html = '<div class="kpis">';
   html += kpiTile("Spend (range)", fmtMoney0(d.cost));
@@ -806,11 +835,10 @@ function renderSummary(){
     var channels = distinctChannelsForApp(ai, osFilter);
     var buckets = {stop:[],watch:[],scale:[],nodata:[],paused:[]};
     channels.forEach(function(ci){
-      var cd = deriveCohortMetrics(aggregateRows(leafRows(ai, osFilter, ci, null)));
       var st = computeStatus3d(ai, osFilter, ci, null, state.rangeStart, state.rangeEnd);
-      var pred = chainPredictedD30(cd, computeRollupMultipliers(ai, osFilter, ci, null));
-      var v = predictedD30Verdict(cd, pred);
-      var key = effectiveVerdictKey(cd, st, pred);
+      var verdictD = computeVerdictBasis(ai, osFilter, ci, null);
+      var v = predictedD30Verdict(verdictD, null);
+      var key = effectiveVerdictKey(verdictD, st, null);
       buckets[key].push({name:CHANNELS[ci], value:v.value, mature:v.mature, predicted:v.predicted, paused:key==="paused"});
       if(allCounts[key]!=null) allCounts[key]++;
     });

@@ -73,6 +73,7 @@ var state = {
   selected: new Set(), // "appIdx:ci:campIdx"
   sort: { key:null, dir:"desc" }, // sortkey e.g. "installs","spend","status","verdict","roas_7","ret_14","ltv_30"
   multiplierOverrides: new Map(), // "appIdx:ci:campIdx:granularity:periodId:hopIdx" -> number
+  pacingTargets: new Map(), // "<scopeKey>:<metricKey>" -> number, manually entered
 };
 
 /* ---------------- filtering / aggregation (weekly cohort) ---------------- */
@@ -1011,6 +1012,7 @@ function render(){
   var tabsHtml = '<div class="tabbar" role="tablist">'+
     tabBtn("summary","Summary")+
     APPS.map(function(a,i){ return tabBtn(String(i), a); }).join("")+
+    tabBtn("pacing","Pacing")+
   '</div>';
   document.getElementById("tabbar-slot").innerHTML = tabsHtml;
 
@@ -1022,6 +1024,8 @@ function render(){
     var body = active ? (renderKpis(ai, osFilter) + appPanelControls(ai, osFilter) + '<div class="panel"><div class="table-scroll">'+renderAppTable(ai, osFilter)+'</div></div>' + footnote()) : "";
     panels += '<div class="tabpanel'+(active?" active":"")+'" data-panel="'+ai+'">'+body+'</div>';
   });
+  var pacingActive = state.activeTab==="pacing";
+  panels += '<div class="tabpanel'+(pacingActive?" active":"")+'" data-panel="pacing">'+(pacingActive?renderPacing():"")+'</div>';
   root.innerHTML = panels;
   root.querySelectorAll('[data-indeterminate="1"]').forEach(function(el){ el.indeterminate = true; });
 
@@ -1061,6 +1065,203 @@ function footnote(){
 }
 function summaryFootnote(){
   return '<div class="footnote">Verdict per channel = D30 ad RoAS (observed once the cohort has fully matured, otherwise a predicted D30 — marked "(pred.)" below — chained from the last mature day via that channel\'s own RoAS-multiplier averages; a bare "—" means not even that could be computed), rolled up across every campaign on that channel within the selected date range — unless the channel is Paused (no spend on D-1), in which case it\'s bucketed as Paused instead of Stop/Watch/Scale. Rule: RoAS <'+Math.round(state.stopThresh*100)+'% → Stop, '+Math.round(state.stopThresh*100)+'–'+Math.round(state.scaleThresh*100)+'% → Watch, ≥'+Math.round(state.scaleThresh*100)+'% → Scale. Adjust the thresholds from the “Rules” control in the top bar. The Stop Simulator (bottom bar, once you check items) instead totals the trailing '+state.trailingDays+'-day average daily spend and average daily <em>non-cohorted</em> ad revenue for whatever you\'ve selected — a live, current-run-rate view rather than a cohort estimate.</div>';
+}
+
+/* ---------------- pacing tab ---------------- */
+// Pure view over the existing non-cohorted daily actuals (DAILY) — no new pull, no cohort
+// concepts. "Daily spend: Total" etc. at day grain = that day's own totals; at month grain =
+// the average per day that month (so the two RoAS rows below coincide at month grain — that's
+// an intentional, documented simplification, not a bug). "Monthly ...: Total" = cumulative
+// sum-to-date within that month, resetting at each month boundary. "EOM ... forecast" = for a
+// month that's fully elapsed within the data, just the actual total (nothing left to forecast);
+// for the current/partial month, a run-rate extrapolation: (cumulative-to-date / days elapsed)
+// × days in month. "IAA RoAS Daily" = daily rev/spend (month grain: the two average rates
+// against each other). "IAA RoAS Running" = cumulative rev/spend to date within the month.
+var PACING_ROWS = [
+  { key:"dailySpend", label:"Daily spend: Total", fmt:"money0", changeEligible:true },
+  { key:"monthlySpend", label:"Monthly spend: Total", fmt:"money0", changeEligible:false },
+  { key:"eomSpend", label:"EOM spend: forecast", fmt:"money0", changeEligible:true },
+  { key:"dailyRev", label:"Daily IAA Rev", fmt:"money0", changeEligible:true },
+  { key:"monthlyRev", label:"Monthly IAA Rev", fmt:"money0", changeEligible:false },
+  { key:"eomRev", label:"EOM IAA Rev forecast", fmt:"money0", changeEligible:true },
+  { key:"roasDaily", label:"IAA RoAS Daily", fmt:"pct1", changeEligible:false },
+  { key:"roasRunning", label:"IAA RoAS Running", fmt:"pct1", changeEligible:true },
+];
+var PACING_FIELD_DAILY = { dailySpend:"cost", monthlySpend:"cumCost", eomSpend:"eomCost", dailyRev:"rev", monthlyRev:"cumRev", eomRev:"eomRev", roasDaily:"roasDaily", roasRunning:"roasRunning" };
+var PACING_FIELD_MONTHLY = { dailySpend:"avgDailyCost", monthlySpend:"totalCost", eomSpend:"eomCost", dailyRev:"avgDailyRev", monthlyRev:"totalRev", eomRev:"eomRev", roasDaily:"roasDaily", roasRunning:"roasRunning" };
+
+function pacingDayAgg(appIdx, osFilter, ci){
+  var byDay = new Map(); // dayIdx -> {cost, rev}
+  for(var i=0;i<DAILY.length;i++){
+    var r = DAILY[i];
+    if(appIdx!=null && r[D_AI]!==appIdx) continue;
+    if(ci!=null && r[D_CI]!==ci) continue;
+    if(!osMatches(r[D_OS], osFilter)) continue;
+    var di = r[D_DI];
+    if(!byDay.has(di)) byDay.set(di, {cost:0, rev:0});
+    var e = byDay.get(di);
+    e.cost += r[D_COST]; e.rev += r[D_REV];
+  }
+  return byDay;
+}
+function pacingDayList(){
+  var out = [];
+  for(var i=0;i<DAYS.length;i++){
+    var day = DAYS[i];
+    if(day < state.rangeStart || day > state.rangeEnd) continue;
+    out.push({ idx:i, day:day, month: day.slice(0,7) });
+  }
+  return out; // DAYS is already sorted, so this stays chronological
+}
+function pacingDaysInMonth(m){
+  return new Date(Date.UTC(+m.slice(0,4), +m.slice(5,7), 0)).getUTCDate();
+}
+// Per-day series for one scope (all-portfolio if appIdx/ci are both null), each day carrying its
+// own totals plus running cumulative-within-month, run-rate EOM forecast, and both RoAS flavors.
+function buildPacingSeries(appIdx, osFilter, ci){
+  var agg = pacingDayAgg(appIdx, osFilter, ci);
+  var days = pacingDayList();
+  var daily = days.map(function(d){
+    var e = agg.get(d.idx) || {cost:0, rev:0};
+    return { day:d.day, month:d.month, cost:e.cost, rev:e.rev };
+  });
+  var monthState = {}; // month -> {cumCost, cumRev, count}
+  daily.forEach(function(row){
+    var m = row.month;
+    if(!monthState[m]) monthState[m] = { cumCost:0, cumRev:0, count:0 };
+    var ms = monthState[m];
+    ms.cumCost += row.cost; ms.cumRev += row.rev; ms.count++;
+    row.cumCost = ms.cumCost; row.cumRev = ms.cumRev;
+    var daysInMonth = pacingDaysInMonth(m);
+    row.eomCost = ms.count>0 ? (ms.cumCost/ms.count)*daysInMonth : null;
+    row.eomRev = ms.count>0 ? (ms.cumRev/ms.count)*daysInMonth : null;
+    row.roasDaily = row.cost>0 ? row.rev/row.cost : null;
+    row.roasRunning = ms.cumCost>0 ? ms.cumRev/ms.cumCost : null;
+  });
+  return daily;
+}
+// Monthly rollup derived from the same daily series (never re-fetched/re-aggregated separately),
+// so the two views can never drift out of sync with each other.
+function buildPacingMonthly(dailySeries){
+  var byMonth = new Map();
+  dailySeries.forEach(function(row){
+    if(!byMonth.has(row.month)) byMonth.set(row.month, []);
+    byMonth.get(row.month).push(row);
+  });
+  var months = [...byMonth.keys()].sort();
+  return months.map(function(m){
+    var rows = byMonth.get(m);
+    var last = rows[rows.length-1];
+    var totalCost = last.cumCost, totalRev = last.cumRev;
+    var isComplete = rows.length >= pacingDaysInMonth(m);
+    var avgCost = totalCost/rows.length, avgRev = totalRev/rows.length;
+    return {
+      month: m,
+      avgDailyCost: avgCost, avgDailyRev: avgRev,
+      totalCost: totalCost, totalRev: totalRev,
+      eomCost: isComplete ? totalCost : last.eomCost,
+      eomRev: isComplete ? totalRev : last.eomRev,
+      roasDaily: avgCost>0 ? avgRev/avgCost : null,
+      roasRunning: totalCost>0 ? totalRev/totalCost : null,
+    };
+  });
+}
+function pacingFmt(row, val){
+  if(val==null) return '<span class="dash">—</span>';
+  return row.fmt==="pct1" ? fmtPct1(val) : fmtMoney0(val);
+}
+function pacingChangeHTML(row, monthly){
+  if(!row.changeEligible || monthly.length<2) return '<span class="dash">—</span>';
+  var curr = monthly[monthly.length-1][PACING_FIELD_MONTHLY[row.key]];
+  var prev = monthly[monthly.length-2][PACING_FIELD_MONTHLY[row.key]];
+  if(curr==null || prev==null || prev===0) return '<span class="dash">—</span>';
+  var pct = (curr-prev)/prev;
+  var cls = pct>0.001 ? "up" : (pct<-0.001 ? "down" : "flat");
+  return '<span class="trend '+cls+'">'+(pct>=0?"+":"")+(pct*100).toFixed(1)+'%</span>';
+}
+function pacingTargetHTML(scopeKey, row){
+  var key = scopeKey+":"+row.key;
+  var val = state.pacingTargets.has(key) ? state.pacingTargets.get(key) : "";
+  return '<input type="number" step="any" class="pacing-target" data-pacingtarget="'+esc(key)+'" value="'+(val===""?"":val)+'" placeholder="—">';
+}
+function isPacingCurrentMonth(m){ return m === DATA_END_STR.slice(0,7); }
+function fmtDayHeaderLabel(s){
+  var d = parseDate(s);
+  return d.toLocaleDateString("en-US",{weekday:"short",timeZone:"UTC"})+" "+d.getUTCDate()+" "+d.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"});
+}
+function renderPacingTable(scopeKey, appIdx, osFilter, ci){
+  var daily = buildPacingSeries(appIdx, osFilter, ci);
+  if(daily.length===0) return '<div class="empty-note">No spend/revenue activity in this scope for the selected range.</div>';
+  var monthly = buildPacingMonthly(daily);
+
+  var head = '<thead><tr><th class="namecol">Metric</th>';
+  monthly.forEach(function(m){ head += '<th class="pacing-month num">'+esc(fmtMonthLabel(m.month))+(isPacingCurrentMonth(m.month)?"*":"")+'</th>'; });
+  head += '<th class="num">%Change</th><th class="num">Target</th>';
+  daily.forEach(function(d,i){ head += '<th class="pacing-day num'+(i===0?" pacing-divider":"")+'">'+esc(fmtDayHeaderLabel(d.day))+'</th>'; });
+  head += '</tr></thead>';
+
+  var body = '<tbody>';
+  PACING_ROWS.forEach(function(row){
+    body += '<tr><td class="namecell">'+esc(row.label)+'</td>';
+    monthly.forEach(function(m){ body += '<td class="num">'+pacingFmt(row, m[PACING_FIELD_MONTHLY[row.key]])+'</td>'; });
+    body += '<td class="num">'+pacingChangeHTML(row, monthly)+'</td>';
+    body += '<td class="num">'+pacingTargetHTML(scopeKey, row)+'</td>';
+    daily.forEach(function(d,i){ body += '<td class="num'+(i===0?" pacing-divider":"")+'">'+pacingFmt(row, d[PACING_FIELD_DAILY[row.key]])+'</td>'; });
+    body += '</tr>';
+  });
+  body += '</tbody>';
+  return '<div class="table-scroll pacing-scroll"><table class="dt pacing-table">'+head+body+'</table></div>';
+}
+function distinctChannelsForAppOSDaily(appIdx, osFilter){
+  var present = new Set();
+  for(var i=0;i<DAILY.length;i++){
+    var r = DAILY[i];
+    if(r[D_AI]!==appIdx) continue;
+    if(!osMatches(r[D_OS], osFilter)) continue;
+    var day = DAYS[r[D_DI]];
+    if(day < state.rangeStart || day > state.rangeEnd) continue;
+    present.add(r[D_CI]);
+  }
+  return [...present].sort(function(a,b){ return CHANNELS[a]<CHANNELS[b]?-1:(CHANNELS[a]>CHANNELS[b]?1:0); });
+}
+function renderPacing(){
+  var out = '<div class="panel" style="margin-bottom:14px;"><div class="panel-head"><h2>Pacing — Overall</h2></div></div>';
+  out += '<div class="panel" style="margin-bottom:18px;">'+renderPacingTable("overall", null, "all", null)+'</div>';
+
+  out += '<div class="panel" style="margin-bottom:14px;"><div class="panel-head"><h2>Pacing — by Game / OS / Channel</h2></div></div>';
+  out += '<div class="panel"><table class="dt"><tbody>';
+  APPS.forEach(function(app, ai){
+    var gameKey = "pacing:game:"+ai;
+    var gameOpen = state.expanded.has(gameKey);
+    out += '<tr class="lvl-channel"><td class="namecell"><div class="namewrap indent-0">'+
+      '<button class="disclose'+(gameOpen?" open":"")+'" data-toggle="'+gameKey+'">▶</button>'+
+      '<span class="namelabel">'+esc(app)+'</span></div></td></tr>';
+    if(gameOpen){
+      ["android","ios"].forEach(function(os){
+        var channels = distinctChannelsForAppOSDaily(ai, os);
+        if(channels.length===0) return;
+        var osKey = gameKey+":os:"+os;
+        var osOpen = state.expanded.has(osKey);
+        out += '<tr class="lvl-campaign"><td class="namecell"><div class="namewrap indent-1">'+
+          '<button class="disclose'+(osOpen?" open":"")+'" data-toggle="'+osKey+'">▶</button>'+
+          '<span class="namelabel">'+(os==="android"?"Android":"iOS")+'</span></div></td></tr>';
+        if(osOpen){
+          channels.forEach(function(ci){
+            var chKey = osKey+":ch:"+ci;
+            var chOpen = state.expanded.has(chKey);
+            out += '<tr class="lvl-period"><td class="namecell"><div class="namewrap indent-2">'+
+              '<button class="disclose'+(chOpen?" open":"")+'" data-toggle="'+chKey+'">▶</button>'+
+              '<span class="namelabel">'+esc(CHANNELS[ci])+'</span></div></td></tr>';
+            if(chOpen){
+              out += '<tr class="lvl-day"><td style="padding:10px 0 16px;">'+renderPacingTable(chKey, ai, os, ci)+'</td></tr>';
+            }
+          });
+        }
+      });
+    }
+  });
+  out += '</tbody></table></div>';
+  return out;
 }
 
 /* ---------------- events ---------------- */
@@ -1209,6 +1410,13 @@ function bootUI(){
       var v = parseFloat(t.value);
       if(t.value===""||isNaN(v)) state.multiplierOverrides.delete(mkey);
       else state.multiplierOverrides.set(mkey, v);
+      render(); return;
+    }
+    if(t.matches("[data-pacingtarget]")){
+      var tkey = t.getAttribute("data-pacingtarget");
+      var tv = parseFloat(t.value);
+      if(t.value===""||isNaN(tv)) state.pacingTargets.delete(tkey);
+      else state.pacingTargets.set(tkey, tv);
       render(); return;
     }
   });

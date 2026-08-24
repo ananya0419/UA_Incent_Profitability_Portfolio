@@ -208,6 +208,17 @@ tr.lvl-day .namelabel{ font-weight:400; color:var(--ink-soft); font-family:var(-
 
 .empty-note{ padding:26px; text-align:center; color:var(--ink-soft); font-size:.85rem; }
 
+/* ---------- pacing tab ---------- */
+.pacing-scroll{ max-height:none; }
+table.pacing-table thead th{ white-space:nowrap; font-size:.72rem; }
+table.pacing-table th.pacing-month{ font-family:var(--font-mono); }
+table.pacing-table th.pacing-day{ font-family:var(--font-mono); font-weight:500; color:var(--ink-soft); }
+table.pacing-table .pacing-divider{ border-left:2px solid var(--line); }
+.pacing-target{
+  width:74px; font-family:var(--font-mono); font-size:.76rem; text-align:right; color:var(--ink);
+  background:var(--surface); border:1px solid var(--line); border-radius:5px; padding:3px 6px;
+}
+
 /* ---------- summary tab ---------- */
 .game-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; }
 .game-card{ background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-lg); overflow:hidden; }

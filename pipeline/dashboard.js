@@ -9,7 +9,7 @@
 var RD = [0, 1, 3, 7, 14, 21, 30];
 var RT = [1, 3, 7, 14, 21, 30];
 
-var DATA, WEEKS, DAYS, CHANNELS, APPS, CAMPAIGNS, ROWS, DAILY,
+var DATA, WEEKS, DAYS, CHANNELS, APPS, CAMPAIGNS, ROWS, DAILY, DAYCOHORT,
   DATA_END, DATA_START, DATA_END_STR, DATA_START_STR;
 
 function applyDataset(dataset){
@@ -21,6 +21,7 @@ function applyDataset(dataset){
   CAMPAIGNS = DATA.campaigns;
   ROWS = DATA.rows;
   DAILY = DATA.dailyRows;
+  DAYCOHORT = DATA.dayCohortRows || [];  // same field layout as ROWS, but field 4 indexes DAYS not WEEKS
   DATA_END = parseDate(DATA.meta.dateRange[1]);
   DATA_START = parseDate(DATA.meta.dateRange[0]);
   DATA_END_STR = DATA.meta.dateRange[1];
@@ -174,6 +175,41 @@ function dailyLeafRows(appIdx, osFilter, ci, campIdx, dStart, dEnd){
   return out;
 }
 
+/* ---------------- daily cohort (day-level drill-down within an expanded week) ---------------- */
+// Same field layout as ROWS (F_AI/F_OS/F_CI/F_CAMP/F_INS/F_COST/F_RR/F_LR/F_RT all line up
+// identically — see build_dataset.mjs), but field index F_WI indexes DAYS instead of WEEKS.
+// No minInstalls filter here (unlike leafRows): once a week has been drilled into, every one of
+// its calendar days should show, including low/zero-volume ones, for a complete picture.
+function dayCohortLeafRows(appIdx, osFilter, ci, campIdx, dStart, dEnd){
+  var out=[];
+  for(var i=0;i<DAYCOHORT.length;i++){
+    var r=DAYCOHORT[i];
+    if(appIdx!=null && r[F_AI]!==appIdx) continue;
+    if(ci!=null && r[F_CI]!==ci) continue;
+    if(campIdx!=null && r[F_CAMP]!==campIdx) continue;
+    if(!osMatches(r[F_OS], osFilter)) continue;
+    var day = DAYS[r[F_WI]];
+    if(day < dStart || day > dEnd) continue;
+    out.push(r);
+  }
+  return out;
+}
+// Mirrors aggregateRows/foldInto exactly, except the maturity-anchor date is the day itself
+// rather than a week's end — deriveCohortMetrics only ever reads agg.maxWeekEnd as a generic
+// "anchor date string", so it's reused unchanged for day-level aggregates.
+function aggregateDayCohortRows(rows){
+  var agg = emptyAgg();
+  for(var i=0;i<rows.length;i++){
+    var r = rows[i];
+    agg.installs += r[F_INS]; agg.cost += r[F_COST]; agg.n++;
+    for(var k=0;k<RD.length;k++){ agg.roasRev[k]+=r[F_RR+k]; agg.ltvRev[k]+=r[F_LR+k]; }
+    for(var k=0;k<RT.length;k++){ agg.ret[k]+=r[F_RT+k]; }
+    var day = DAYS[r[F_WI]];
+    if(agg.maxWeekEnd==null || day > agg.maxWeekEnd) agg.maxWeekEnd = day;
+  }
+  return agg;
+}
+
 // Status badge: Live only if spend > 0 on D-1 (the row window's own last calendar day,
 // clipped to available data + the selected range) — a single day's spend decides it.
 var STATUS_WINDOW = 1;
@@ -294,7 +330,11 @@ function basicAndRoasCellsHTML(d){
 // (chained via the RoAS-multiplier row), never mixed into the actual/observed D30 figure above.
 function predictedCellHTML(d, predictedD30){
   var cls = "col-predict num grpstart";
-  if(d.roasMature[D30_IDX]) return '<td class="'+cls+'"><span class="dash" title="D30 already observed — see the actual RoAS · D30 column">—</span></td>';
+  if(d.roasMature[D30_IDX]){
+    var actual = d.roas[D30_IDX];
+    var avc = cellVerdict(actual);
+    return '<td class="'+cls+'"><span class="cell-tint '+(avc?tintClass(avc):'')+'" title="D30 already observed — matches the actual RoAS · D30 column">'+fmtPct1(actual)+'</span></td>';
+  }
   if(predictedD30==null) return '<td class="'+cls+'"><span class="dash" title="Not enough mature history yet to chain a prediction">—</span></td>';
   var vc = cellVerdict(predictedD30);
   return '<td class="'+cls+'"><span class="cell-tint predict-cell '+tintClass(vc)+'" title="Predicted D30 ad RoAS, chained from the last observed day via the RoAS Multiplier row">≈ '+fmtPct1(predictedD30)+'</span></td>';
@@ -614,13 +654,18 @@ function renderAppTable(appIdx, osFilter){
           // default order is already chronological (from buildPeriods); only re-sort if a column sort is active
           sortRows(periodObjs);
           var periodSeriesKey = appIdx+":"+ci+":"+campIdx+":"+state.granularity;
+          var isWeekGran = state.granularity==="week";
           var prev=null;
           periodObjs.forEach(function(po){
             var p=po.p, pStatus=po.status;
             var periodResetPrefix = periodSeriesKey+":"+p.periodId;
+            var dayToggleKey = "day:"+appIdx+":"+ci+":"+campIdx+":"+p.periodId;
+            var dayOpen = isWeekGran && state.expanded.has(dayToggleKey);
             rows.push('<tr class="lvl-period">'+
               '<td class="namecell"><div class="namewrap indent-2">'+
-                '<button class="disclose leaf">▶</button>'+
+                (isWeekGran
+                  ? '<button class="disclose'+(dayOpen?" open":"")+'" data-toggle="'+dayToggleKey+'">▶</button>'
+                  : '<button class="disclose leaf">▶</button>')+
                 '<span class="namelabel">'+esc(p.label)+'</span>'+
                 resetRowBtnHTML(periodResetPrefix, p.label)+
               '</div></td>'+
@@ -630,6 +675,30 @@ function renderAppTable(appIdx, osFilter){
               '<td>'+trendHTML(p.d, prev)+'</td>'+
             '</tr>');
             prev = p.d;
+            if(dayOpen){
+              var dayPeriods = buildDayPeriods(appIdx, osFilter, ci, campIdx, p.winStart, p.winEnd);
+              var dayObjs = dayPeriods.map(function(dp){
+                return { p:dp, d:dp.d, status: computeStatus3d(appIdx, osFilter, ci, campIdx, dp.winStart, dp.winEnd), predictedD30: dp.predictedD30 };
+              });
+              sortRows(dayObjs);
+              var dprev = null;
+              dayObjs.forEach(function(dpo){
+                var dp=dpo.p, dStatus=dpo.status;
+                var dayResetPrefix = appIdx+":"+ci+":"+campIdx+":day:"+dp.periodId;
+                rows.push('<tr class="lvl-day">'+
+                  '<td class="namecell"><div class="namewrap indent-3">'+
+                    '<button class="disclose leaf">▶</button>'+
+                    '<span class="namelabel">'+esc(dp.label)+'</span>'+
+                    resetRowBtnHTML(dayResetPrefix, dp.label)+
+                  '</div></td>'+
+                  '<td>'+statusBadgeHTML(dStatus)+'</td>'+
+                  '<td>'+verdictBadgeHTML(dp.d, dStatus, dp.predictedD30)+'</td>'+
+                  metricCellsHTML(dp.d, dp.predictedD30, dp.hops)+
+                  '<td>'+trendHTML(dp.d, dprev)+'</td>'+
+                '</tr>');
+                dprev = dp.d;
+              });
+            }
           });
         }
       });
@@ -671,6 +740,29 @@ function buildPeriods(appIdx, osFilter, ci, campIdx){
         winStart: monthStart, winEnd: lastDay,
       };
     });
+  }
+  return computePeriodMultipliers(periods, seriesKey);
+}
+
+// One period per calendar day within [weekStart, weekEnd] (clipped to available data) — every
+// day is shown, including $0-spend ones, for a complete picture once a week is drilled into.
+// Multiplier chaining/history is naturally scoped to just this week's ~7 days, since each call
+// only ever sees this one week's periods.
+function buildDayPeriods(appIdx, osFilter, ci, campIdx, weekStart, weekEnd){
+  var clipStart = weekStart < DATA_START_STR ? DATA_START_STR : weekStart;
+  var clipEnd = weekEnd > DATA_END_STR ? DATA_END_STR : weekEnd;
+  var seriesKey = appIdx+":"+ci+":"+campIdx+":day";
+  var periods = [];
+  if(clipEnd >= clipStart){
+    for(var d=clipStart; d<=clipEnd; d=addDaysStr(d,1)){
+      var dayRows = dayCohortLeafRows(appIdx, osFilter, ci, campIdx, d, d);
+      periods.push({
+        periodId: "d"+d,
+        label: fmtDateLabel(d),
+        d: deriveCohortMetrics(aggregateDayCohortRows(dayRows)),
+        winStart: d, winEnd: d,
+      });
+    }
   }
   return computePeriodMultipliers(periods, seriesKey);
 }

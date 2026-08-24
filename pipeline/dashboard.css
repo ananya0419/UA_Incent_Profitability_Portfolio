@@ -157,9 +157,10 @@ table.dt td.grpstart, table.dt th.grpstart{ border-left:1px solid var(--line-sof
 table.dt tbody tr.lvl-campaign td.namecell{ background:var(--surface-2); }
 table.dt tbody tr.lvl-campaign:hover td.namecell{ background:var(--surface-2); filter:brightness(1.03); }
 table.dt tbody tr.lvl-period td.namecell{ background:var(--paper); }
+table.dt tbody tr.lvl-day td.namecell{ background:var(--paper); }
 
 .namewrap{ display:flex; align-items:center; gap:6px; }
-.indent-0{ padding-left:0; } .indent-1{ padding-left:20px; } .indent-2{ padding-left:40px; }
+.indent-0{ padding-left:0; } .indent-1{ padding-left:20px; } .indent-2{ padding-left:40px; } .indent-3{ padding-left:60px; }
 .disclose{ border:0; background:transparent; cursor:pointer; color:var(--ink-soft); font-size:.7rem; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; flex:none; transition:transform .12s ease; }
 .disclose.open{ transform:rotate(90deg); }
 .disclose.leaf{ visibility:hidden; }
@@ -172,6 +173,7 @@ table.dt tbody tr.lvl-period td.namecell{ background:var(--paper); }
 .namelabel{ font-weight:600; font-size:.83rem; }
 tr.lvl-channel .namelabel{ font-family:var(--font-display); font-weight:700; }
 tr.lvl-period .namelabel{ font-weight:500; color:var(--ink-soft); font-family:var(--font-mono); font-size:.76rem; }
+tr.lvl-day .namelabel{ font-weight:400; color:var(--ink-soft); font-family:var(--font-mono); font-size:.73rem; opacity:.85; }
 .stopchk{ accent-color:var(--stop); flex:none; cursor:pointer; }
 
 .badge{ display:inline-flex; align-items:center; gap:4px; font-size:.66rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:2px 7px; border-radius:999px; border:1px solid; white-space:nowrap; }

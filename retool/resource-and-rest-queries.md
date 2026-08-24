@@ -46,3 +46,19 @@ Same resource, same shape, but mirrors `fetch_daily.mjs` (unscoped, non-cohorted
 | `network__in` | (same list as above) |
 
 Also set to not run automatically on page load.
+
+## 4. REST Query: `fetchDailyCohortRawByApp`
+
+Same resource, same shape as `fetchWeeklyRawByApp`, but dimensioned by `day` instead of `week` — mirrors `fetch_daily_cohort.mjs`. This powers the day-level drill-down inside an expanded week row (verified live against Adjust that day-dimensioned cohort metrics — `roas_ad_dN`, `retention_rate_dN`, `lifetime_value_ad_dN` — are fully supported, same as week-dimensioned):
+
+| Key | Value |
+|---|---|
+| `ad_spend_mode` | `mixed` |
+| `app_token__in` | `{{ appToken }}` |
+| `date_period` | `{{ dateStart }}:{{ dateEnd }}` |
+| `dimensions` | `day,os_name,network,campaign` |
+| `metrics` | `installs,cost,ad_revenue,roas_ad_d0,roas_ad_d1,roas_ad_d3,roas_ad_d7,roas_ad_d14,roas_ad_d21,roas_ad_d30,retention_rate_d1,retention_rate_d3,retention_rate_d7,retention_rate_d14,retention_rate_d21,retention_rate_d30,lifetime_value_ad_d0,lifetime_value_ad_d1,lifetime_value_ad_d3,lifetime_value_ad_d7,lifetime_value_ad_d14,lifetime_value_ad_d21,lifetime_value_ad_d30` |
+| `ad_revenue_sources` | `AppLovin Max,S2S Ad Revenue` |
+| `network__in` | (same list as above) |
+
+Also set to not run automatically on page load — `fetchAllDailyCohort` triggers it.

@@ -3,6 +3,7 @@ import { PULL_RANGE, REFRESHED_AT } from "./common.mjs";
 
 const raw = JSON.parse(readFileSync(new URL("./raw_rows.json", import.meta.url)));
 const rawDaily = JSON.parse(readFileSync(new URL("./raw_daily_rows.json", import.meta.url)));
+const rawDailyCohort = JSON.parse(readFileSync(new URL("./raw_daily_cohort_rows.json", import.meta.url)));
 
 const APPS = ["Nova Solitaire", "Nut Sort", "Seek & Find", "Zen Solitaire"];
 const CHANNELS = [
@@ -108,6 +109,11 @@ for (const r of rawDaily) {
   dailyPre.push({ ai, os, ci, campIdx, day, installs, cost, adRevenue });
 }
 
+// also union in any days that only appear in the day-cohort pull (same date range/apps/networks
+// as the actuals pull, so in practice these should coincide, but don't silently drop cohort data
+// for a day if it doesn't happen to have a matching actuals row).
+for (const r of rawDailyCohort) if (r.day) daySet.add(r.day);
+
 const daysOut = [...daySet].sort();
 const dayToIdx = new Map(daysOut.map((d, i) => [d, i]));
 
@@ -127,6 +133,56 @@ const compactDaily = [...dailyMerged.values()].map(m => [
   round(m.installs, 0), round(m.cost, 2), round(m.adRevenue, 2),
 ]);
 
+/* ---------------- daily cohort rows (same metrics as weekly, dimensioned by day) ---------------- */
+const dayCohortRows = [];
+let dayCohortSkipped = 0;
+
+for (const r of rawDailyCohort) {
+  const ai = appIdx[r.app];
+  const ci = chIdx[r.channel];
+  if (ai === undefined || ci === undefined) { dayCohortSkipped++; continue; }
+
+  const os = r.os_name === "ios" ? 1 : 0;
+  const di = dayToIdx.get(r.day);
+  const campIdx = getCampaignIdx(r.campaign);
+
+  const installs = parseFloat(r.installs) || 0;
+  const cost = parseFloat(r.cost) || 0;
+
+  const roasRev = RD.map(d => (parseFloat(r[`roas_ad_d${d}`]) || 0) * cost);
+  const ltvRev = RD.map(d => (parseFloat(r[`lifetime_value_ad_d${d}`]) || 0) * installs);
+  const ret = RT.map(d => (parseFloat(r[`retention_rate_d${d}`]) || 0) * installs);
+
+  dayCohortRows.push({ ai, os, ci, campIdx, di, installs, cost, roasRev, ltvRev, ret });
+}
+
+const dayCohortMerged = new Map();
+for (const r of dayCohortRows) {
+  const key = [r.ai, r.os, r.ci, r.campIdx, r.di].join(":");
+  if (!dayCohortMerged.has(key)) {
+    dayCohortMerged.set(key, {
+      ai: r.ai, os: r.os, ci: r.ci, campIdx: r.campIdx, di: r.di,
+      installs: 0, cost: 0,
+      roasRev: [0, 0, 0, 0, 0, 0, 0],
+      ltvRev: [0, 0, 0, 0, 0, 0, 0],
+      ret: [0, 0, 0, 0, 0, 0],
+    });
+  }
+  const m = dayCohortMerged.get(key);
+  m.installs += r.installs;
+  m.cost += r.cost;
+  for (let i = 0; i < 7; i++) { m.roasRev[i] += r.roasRev[i]; m.ltvRev[i] += r.ltvRev[i]; }
+  for (let i = 0; i < 6; i++) m.ret[i] += r.ret[i];
+}
+
+const compactDayCohort = [...dayCohortMerged.values()].map(m => [
+  m.ai, m.os, m.ci, m.campIdx, m.di,
+  round(m.installs, 0), round(m.cost, 2),
+  ...m.roasRev.map(v => round(v, 2)),
+  ...m.ltvRev.map(v => round(v, 2)),
+  ...m.ret.map(v => round(v, 2)),
+]);
+
 /* ---------------- assemble ---------------- */
 const dataset = {
   apps: APPS,
@@ -138,6 +194,7 @@ const dataset = {
   rtDays: RT,
   rows: compactRows,
   dailyRows: compactDaily,
+  dayCohortRows: compactDayCohort,
   meta: {
     dateRange: [PULL_RANGE.start, PULL_RANGE.end],
     refreshedAt: REFRESHED_AT,
@@ -146,7 +203,8 @@ const dataset = {
 };
 
 writeFileSync(new URL("./dataset.json", import.meta.url), JSON.stringify(dataset));
-console.log("skipped(week):", skipped, "skipped(day):", dailySkipped);
+console.log("skipped(week):", skipped, "skipped(day):", dailySkipped, "skipped(dayCohort):", dayCohortSkipped);
 console.log("apps:", APPS.length, "channels:", CHANNELS.length, "campaigns:", campaignList.length,
-  "weeks:", weeksOut.length, "days:", daysOut.length, "weekRows:", compactRows.length, "dailyRows:", compactDaily.length);
+  "weeks:", weeksOut.length, "days:", daysOut.length, "weekRows:", compactRows.length,
+  "dailyRows:", compactDaily.length, "dayCohortRows:", compactDayCohort.length);
 console.log("dataset.json size (KB):", Math.round(JSON.stringify(dataset).length / 1024));

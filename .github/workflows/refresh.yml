@@ -33,6 +33,7 @@ jobs:
           node fetch_fonts.mjs
           node fetch_all.mjs
           node fetch_daily.mjs
+          node fetch_daily_cohort.mjs
           node build_dataset.mjs
           node make_html.mjs
 

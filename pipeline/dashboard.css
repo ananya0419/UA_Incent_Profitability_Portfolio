@@ -218,6 +218,13 @@ table.pacing-table .pacing-divider{ border-left:2px solid var(--line); }
   width:74px; font-family:var(--font-mono); font-size:.76rem; text-align:right; color:var(--ink);
   background:var(--surface); border:1px solid var(--line); border-radius:5px; padding:3px 6px;
 }
+.pacing-compare{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 4px 10px; font-size:.78rem; }
+.pacing-compare .lbl{ color:var(--ink-soft); font-weight:600; }
+.pacing-compare .hint{ color:var(--ink-soft); font-size:.72rem; }
+.pacing-compare select{
+  font-family:var(--font-mono); font-size:.76rem; color:var(--ink); background:var(--surface);
+  border:1px solid var(--line); border-radius:5px; padding:3px 6px; max-width:180px;
+}
 
 /* ---------- summary tab ---------- */
 .game-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; }

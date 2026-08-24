@@ -74,6 +74,7 @@ var state = {
   sort: { key:null, dir:"desc" }, // sortkey e.g. "installs","spend","status","verdict","roas_7","ret_14","ltv_30"
   multiplierOverrides: new Map(), // "appIdx:ci:campIdx:granularity:periodId:hopIdx" -> number
   pacingTargets: new Map(), // "<scopeKey>:<metricKey>" -> number, manually entered
+  pacingCompare: new Map(), // scopeKey -> {a: colId, b: colId}, the two columns %Change compares
 };
 
 /* ---------------- filtering / aggregation (weekly cohort) ---------------- */
@@ -1069,23 +1070,35 @@ function summaryFootnote(){
 
 /* ---------------- pacing tab ---------------- */
 // Pure view over the existing non-cohorted daily actuals (DAILY) — no new pull, no cohort
-// concepts. "Daily spend: Total" etc. at day grain = that day's own totals; at month grain =
-// the average per day that month (so the two RoAS rows below coincide at month grain — that's
-// an intentional, documented simplification, not a bug). "Monthly ...: Total" = cumulative
-// sum-to-date within that month, resetting at each month boundary. "EOM ... forecast" = for a
-// month that's fully elapsed within the data, just the actual total (nothing left to forecast);
-// for the current/partial month, a run-rate extrapolation: (cumulative-to-date / days elapsed)
-// × days in month. "IAA RoAS Daily" = daily rev/spend (month grain: the two average rates
-// against each other). "IAA RoAS Running" = cumulative rev/spend to date within the month.
+// concepts. IAA revenue = ad revenue (dataset's D_REV field), same as everywhere else in this
+// dashboard. Methodology (confirmed with the user against each row individually):
+//   Daily [spend/rev]: Total   — at day grain, that day's own total; at month grain, the
+//                                 month's total so far divided by the number of days elapsed
+//                                 in that month (so it's a full-month average once the month
+//                                 has closed).
+//   Monthly [spend/rev]: Total — cumulative sum-to-date within the month, resetting at each
+//                                 month boundary. At month grain this is just the month's total.
+//   EOM [spend/rev] forecast   — avg-daily-so-far × days in that month, uniformly (for an
+//                                 already-closed month this equals the actual total exactly,
+//                                 since avg-daily × its own day count reconstructs the sum).
+//   IAA RoAS Daily             — daily spend vs daily revenue (day grain: that day's own ratio;
+//                                 month grain: the month's two daily averages against each
+//                                 other — deliberately coincides with RoAS Running at month
+//                                 grain, since avg/avg over the same day count algebraically
+//                                 equals total/total).
+//   IAA RoAS Running           — monthly (cumulative) spend vs monthly (cumulative) revenue.
+// %Change is a user-driven comparison, not an automatic month-over-month calculation: pick any
+// two columns (month or day) from the dropdowns above each table, and every row shows
+// (A ÷ B − 1) × 100%.
 var PACING_ROWS = [
-  { key:"dailySpend", label:"Daily spend: Total", fmt:"money0", changeEligible:true },
-  { key:"monthlySpend", label:"Monthly spend: Total", fmt:"money0", changeEligible:false },
-  { key:"eomSpend", label:"EOM spend: forecast", fmt:"money0", changeEligible:true },
-  { key:"dailyRev", label:"Daily IAA Rev", fmt:"money0", changeEligible:true },
-  { key:"monthlyRev", label:"Monthly IAA Rev", fmt:"money0", changeEligible:false },
-  { key:"eomRev", label:"EOM IAA Rev forecast", fmt:"money0", changeEligible:true },
-  { key:"roasDaily", label:"IAA RoAS Daily", fmt:"pct1", changeEligible:false },
-  { key:"roasRunning", label:"IAA RoAS Running", fmt:"pct1", changeEligible:true },
+  { key:"dailySpend", label:"Daily spend: Total", fmt:"money0" },
+  { key:"monthlySpend", label:"Monthly spend: Total", fmt:"money0" },
+  { key:"eomSpend", label:"EOM spend: forecast", fmt:"money0" },
+  { key:"dailyRev", label:"Daily IAA Rev", fmt:"money0" },
+  { key:"monthlyRev", label:"Monthly IAA Rev", fmt:"money0" },
+  { key:"eomRev", label:"EOM IAA Rev forecast", fmt:"money0" },
+  { key:"roasDaily", label:"IAA RoAS Daily", fmt:"pct1" },
+  { key:"roasRunning", label:"IAA RoAS Running", fmt:"pct1" },
 ];
 var PACING_FIELD_DAILY = { dailySpend:"cost", monthlySpend:"cumCost", eomSpend:"eomCost", dailyRev:"rev", monthlyRev:"cumRev", eomRev:"eomRev", roasDaily:"roasDaily", roasRunning:"roasRunning" };
 var PACING_FIELD_MONTHLY = { dailySpend:"avgDailyCost", monthlySpend:"totalCost", eomSpend:"eomCost", dailyRev:"avgDailyRev", monthlyRev:"totalRev", eomRev:"eomRev", roasDaily:"roasDaily", roasRunning:"roasRunning" };
@@ -1153,14 +1166,16 @@ function buildPacingMonthly(dailySeries){
     var rows = byMonth.get(m);
     var last = rows[rows.length-1];
     var totalCost = last.cumCost, totalRev = last.cumRev;
-    var isComplete = rows.length >= pacingDaysInMonth(m);
+    var daysInMonth = pacingDaysInMonth(m);
     var avgCost = totalCost/rows.length, avgRev = totalRev/rows.length;
+    // avg-daily x days-in-month, uniformly — for a fully-elapsed month rows.length===daysInMonth
+    // already, so this equals the actual total exactly; no separate "is this month complete" case.
     return {
       month: m,
       avgDailyCost: avgCost, avgDailyRev: avgRev,
       totalCost: totalCost, totalRev: totalRev,
-      eomCost: isComplete ? totalCost : last.eomCost,
-      eomRev: isComplete ? totalRev : last.eomRev,
+      eomCost: avgCost*daysInMonth,
+      eomRev: avgRev*daysInMonth,
       roasDaily: avgCost>0 ? avgRev/avgCost : null,
       roasRunning: totalCost>0 ? totalRev/totalCost : null,
     };
@@ -1170,14 +1185,51 @@ function pacingFmt(row, val){
   if(val==null) return '<span class="dash">—</span>';
   return row.fmt==="pct1" ? fmtPct1(val) : fmtMoney0(val);
 }
-function pacingChangeHTML(row, monthly){
-  if(!row.changeEligible || monthly.length<2) return '<span class="dash">—</span>';
-  var curr = monthly[monthly.length-1][PACING_FIELD_MONTHLY[row.key]];
-  var prev = monthly[monthly.length-2][PACING_FIELD_MONTHLY[row.key]];
-  if(curr==null || prev==null || prev===0) return '<span class="dash">—</span>';
-  var pct = (curr-prev)/prev;
-  var cls = pct>0.001 ? "up" : (pct<-0.001 ? "down" : "flat");
-  return '<span class="trend '+cls+'">'+(pct>=0?"+":"")+(pct*100).toFixed(1)+'%</span>';
+// Unified list of every column in the table (months first, then days) so the two %Change
+// dropdowns can pick any of them interchangeably — each entry carries its own field-name map
+// since months and days use different field names for the same concept (see PACING_FIELD_*).
+function pacingAllColumns(monthly, daily){
+  var cols = monthly.map(function(m){
+    return { id:"m:"+m.month, label: fmtMonthLabel(m.month)+(isPacingCurrentMonth(m.month)?"*":""), data:m, fieldMap: PACING_FIELD_MONTHLY };
+  });
+  daily.forEach(function(d){
+    cols.push({ id:"d:"+d.day, label: fmtDayHeaderLabel(d.day), data:d, fieldMap: PACING_FIELD_DAILY });
+  });
+  return cols;
+}
+// Defaults to the last two months (closest match to the old automatic behavior) until the user
+// picks something themselves; falls back gracefully if a previous selection's column no longer
+// exists in this table (e.g. a narrower date range).
+function pacingCompareSelection(scopeKey, cols){
+  var sel = state.pacingCompare.get(scopeKey);
+  var validA = sel && cols.some(function(c){ return c.id===sel.a; });
+  var validB = sel && cols.some(function(c){ return c.id===sel.b; });
+  var months = cols.filter(function(c){ return c.id.charAt(0)==="m"; });
+  var a = validA ? sel.a : (months.length ? months[months.length-1].id : (cols.length ? cols[cols.length-1].id : null));
+  var b = validB ? sel.b : (months.length>=2 ? months[months.length-2].id : (cols.length>=2 ? cols[cols.length-2].id : null));
+  return { a:a, b:b };
+}
+function pacingColValue(col, rowKey){
+  return col ? col.data[col.fieldMap[rowKey]] : null;
+}
+function pacingChangeHTML(row, colA, colB){
+  var va = pacingColValue(colA, row.key), vb = pacingColValue(colB, row.key);
+  if(va==null || vb==null || vb===0) return '<span class="dash">—</span>';
+  var pct = (va/vb - 1)*100;
+  var cls = pct>0.1 ? "up" : (pct<-0.1 ? "down" : "flat");
+  return '<span class="trend '+cls+'">'+(pct>=0?"+":"")+pct.toFixed(1)+'%</span>';
+}
+function pacingCompareControlsHTML(scopeKey, cols, sel){
+  function opts(selectedId){
+    return cols.map(function(c){ return '<option value="'+esc(c.id)+'"'+(c.id===selectedId?" selected":"")+'>'+esc(c.label)+'</option>'; }).join("");
+  }
+  return '<div class="pacing-compare">'+
+    '<span class="lbl">%Change compares</span>'+
+    '<select data-pacingcmp="'+esc(scopeKey)+':a">'+opts(sel.a)+'</select>'+
+    '<span class="lbl">vs</span>'+
+    '<select data-pacingcmp="'+esc(scopeKey)+':b">'+opts(sel.b)+'</select>'+
+    '<span class="hint">(A ÷ B − 1) × 100%</span>'+
+  '</div>';
 }
 function pacingTargetHTML(scopeKey, row){
   var key = scopeKey+":"+row.key;
@@ -1193,6 +1245,10 @@ function renderPacingTable(scopeKey, appIdx, osFilter, ci){
   var daily = buildPacingSeries(appIdx, osFilter, ci);
   if(daily.length===0) return '<div class="empty-note">No spend/revenue activity in this scope for the selected range.</div>';
   var monthly = buildPacingMonthly(daily);
+  var cols = pacingAllColumns(monthly, daily);
+  var sel = pacingCompareSelection(scopeKey, cols);
+  var colA = cols.find(function(c){ return c.id===sel.a; });
+  var colB = cols.find(function(c){ return c.id===sel.b; });
 
   var head = '<thead><tr><th class="namecol">Metric</th>';
   monthly.forEach(function(m){ head += '<th class="pacing-month num">'+esc(fmtMonthLabel(m.month))+(isPacingCurrentMonth(m.month)?"*":"")+'</th>'; });
@@ -1204,13 +1260,13 @@ function renderPacingTable(scopeKey, appIdx, osFilter, ci){
   PACING_ROWS.forEach(function(row){
     body += '<tr><td class="namecell">'+esc(row.label)+'</td>';
     monthly.forEach(function(m){ body += '<td class="num">'+pacingFmt(row, m[PACING_FIELD_MONTHLY[row.key]])+'</td>'; });
-    body += '<td class="num">'+pacingChangeHTML(row, monthly)+'</td>';
+    body += '<td class="num">'+pacingChangeHTML(row, colA, colB)+'</td>';
     body += '<td class="num">'+pacingTargetHTML(scopeKey, row)+'</td>';
     daily.forEach(function(d,i){ body += '<td class="num'+(i===0?" pacing-divider":"")+'">'+pacingFmt(row, d[PACING_FIELD_DAILY[row.key]])+'</td>'; });
     body += '</tr>';
   });
   body += '</tbody>';
-  return '<div class="table-scroll pacing-scroll"><table class="dt pacing-table">'+head+body+'</table></div>';
+  return pacingCompareControlsHTML(scopeKey, cols, sel)+'<div class="table-scroll pacing-scroll"><table class="dt pacing-table">'+head+body+'</table></div>';
 }
 function distinctChannelsForAppOSDaily(appIdx, osFilter){
   var present = new Set();
@@ -1417,6 +1473,17 @@ function bootUI(){
       var tv = parseFloat(t.value);
       if(t.value===""||isNaN(tv)) state.pacingTargets.delete(tkey);
       else state.pacingTargets.set(tkey, tv);
+      render(); return;
+    }
+    if(t.matches("[data-pacingcmp]")){
+      // attribute is "<scopeKey>:a" or "<scopeKey>:b" — scopeKey itself may contain colons
+      // (e.g. "pacing:game:0:os:android:ch:5"), so only the LAST segment is the a/b marker.
+      var cmpParts = t.getAttribute("data-pacingcmp").split(":");
+      var side = cmpParts.pop();
+      var cmpScope = cmpParts.join(":");
+      var cur = state.pacingCompare.get(cmpScope) || {};
+      cur[side] = t.value;
+      state.pacingCompare.set(cmpScope, cur);
       render(); return;
     }
   });

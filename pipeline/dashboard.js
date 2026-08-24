@@ -278,6 +278,7 @@ function cellVerdict(v){ if(v==null) return null; if(v>=state.scaleThresh) retur
 function basicAndRoasCellsHTML(d){
   var out = "";
   out += '<td class="col-basic num">'+fmtInt(d.installs)+'</td>';
+  out += '<td class="col-basic num">'+(d.installs>0 ? fmtMoney2(d.cost/d.installs) : '<span class="dash">—</span>')+'</td>';
   out += '<td class="col-basic num">'+fmtMoney0(d.cost)+'</td>';
   for(var i=0;i<RD.length;i++){
     var v=d.roas[i], mature=d.roasMature[i];
@@ -476,7 +477,7 @@ function tableHeadHTML(){
   h += '<tr class="grp">';
   h += '<th class="namecol" colspan="1"></th>';
   h += '<th colspan="2"></th>';
-  h += '<th colspan="2">Volume</th>';
+  h += '<th colspan="3">Volume</th>';
   h += '<th colspan="'+RD.length+'" class="col-roas grpstart">RoAS · Ad (cohort, actual)</th>';
   h += '<th colspan="1" class="col-predict grpstart">Predicted</th>';
   h += '<th colspan="'+HOPS.length+'" class="col-mult grpstart">RoAS Multiplier (editable)</th>';
@@ -489,6 +490,7 @@ function tableHeadHTML(){
   h += sortTh("Status","status");
   h += sortTh("Verdict (D30 RoAS)","verdict");
   h += sortTh("Installs","installs","col-basic");
+  h += sortTh("CPI","cpi","col-basic");
   h += sortTh("Spend","spend","col-basic");
   for(var i=0;i<RD.length;i++) h += sortTh("D"+RD[i], "roas_"+RD[i], "col-roas"+(i===0?" grpstart":""));
   h += sortTh("D30 (pred.)", "predicted", "col-predict grpstart");
@@ -506,6 +508,7 @@ function sortValue(key, d, status, predictedD30){
   if(key==="verdict"){ var order={scale:4,watch:3,stop:2,paused:1,nodata:0}; return order[effectiveVerdictKey(d,status,predictedD30)]; }
   if(key==="predicted") return predictedD30;
   if(key==="installs") return d.installs;
+  if(key==="cpi") return d.installs>0 ? d.cost/d.installs : null;
   if(key==="spend") return d.cost;
   if(key.indexOf("roas_")===0){ var idx=RD.indexOf(+key.slice(5)); return idx>=0?d.roas[idx]:null; }
   if(key.indexOf("ret_")===0){ var idx=RT.indexOf(+key.slice(4)); return idx>=0?d.ret[idx]:null; }

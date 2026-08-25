@@ -65,6 +65,8 @@ var state = {
   trailingDays: 3,
   stopThresh: 0.70,
   scaleThresh: 1.00,
+  section: "performance", // 'performance' | 'pacing' — sidebar-level section
+  pacingSubTab: "overall", // 'overall' | 'gameos' — Pacing section's own sub-navigation
   activeTab: "summary", // 'summary' | app index as string
   osFilter: {}, // per app tab: 'all'|'android'|'ios'
   summaryOS: "all",
@@ -1023,23 +1025,35 @@ function render(){
   var savedLeft = oldScrollEl ? oldScrollEl.scrollLeft : 0;
   var savedWinX = window.scrollX, savedWinY = window.scrollY;
 
-  var tabsHtml = '<div class="tabbar" role="tablist">'+
-    tabBtn("summary","Summary")+
-    APPS.map(function(a,i){ return tabBtn(String(i), a); }).join("")+
-    tabBtn("pacing","Pacing")+
-  '</div>';
-  document.getElementById("tabbar-slot").innerHTML = tabsHtml;
+  document.getElementById("sidebar-slot").innerHTML =
+    '<button class="sidebar-btn'+(state.section==="performance"?" active":"")+'" data-section="performance"><span class="icon">📊</span>Performance</button>'+
+    '<button class="sidebar-btn'+(state.section==="pacing"?" active":"")+'" data-section="pacing"><span class="icon">📈</span>Pacing</button>';
 
   var panels = "";
-  panels += '<div class="tabpanel'+(state.activeTab==="summary"?" active":"")+'" data-panel="summary">'+renderSummary()+summaryFootnote()+'</div>';
-  APPS.forEach(function(app, ai){
-    var osFilter = state.osFilter[ai] || "all";
-    var active = state.activeTab===String(ai);
-    var body = active ? (renderKpis(ai, osFilter) + appPanelControls(ai, osFilter) + '<div class="panel"><div class="table-scroll">'+renderAppTable(ai, osFilter)+'</div></div>' + footnote()) : "";
-    panels += '<div class="tabpanel'+(active?" active":"")+'" data-panel="'+ai+'">'+body+'</div>';
-  });
-  var pacingActive = state.activeTab==="pacing";
-  panels += '<div class="tabpanel'+(pacingActive?" active":"")+'" data-panel="pacing">'+(pacingActive?renderPacing():"")+'</div>';
+  if(state.section==="performance"){
+    var tabsHtml = '<div class="tabbar" role="tablist">'+
+      tabBtn("summary","Summary")+
+      APPS.map(function(a,i){ return tabBtn(String(i), a); }).join("")+
+    '</div>';
+    document.getElementById("tabbar-slot").innerHTML = tabsHtml;
+
+    panels += '<div class="tabpanel'+(state.activeTab==="summary"?" active":"")+'" data-panel="summary">'+renderSummary()+summaryFootnote()+'</div>';
+    APPS.forEach(function(app, ai){
+      var osFilter = state.osFilter[ai] || "all";
+      var active = state.activeTab===String(ai);
+      var body = active ? (renderKpis(ai, osFilter) + appPanelControls(ai, osFilter) + '<div class="panel"><div class="table-scroll">'+renderAppTable(ai, osFilter)+'</div></div>' + footnote()) : "";
+      panels += '<div class="tabpanel'+(active?" active":"")+'" data-panel="'+ai+'">'+body+'</div>';
+    });
+  } else {
+    var pacingTabsHtml = '<div class="tabbar" role="tablist">'+
+      pacingTabBtn("overall","Overall")+
+      pacingTabBtn("gameos","Game and OS")+
+    '</div>';
+    document.getElementById("tabbar-slot").innerHTML = pacingTabsHtml;
+
+    panels += '<div class="tabpanel'+(state.pacingSubTab==="overall"?" active":"")+'" data-panel="pacing-overall">'+(state.pacingSubTab==="overall"?renderPacingOverallTab():"")+'</div>';
+    panels += '<div class="tabpanel'+(state.pacingSubTab==="gameos"?" active":"")+'" data-panel="pacing-gameos">'+(state.pacingSubTab==="gameos"?renderPacingGameOsTab():"")+'</div>';
+  }
   root.innerHTML = panels;
   root.querySelectorAll('[data-indeterminate="1"]').forEach(function(el){ el.indeterminate = true; });
 
@@ -1052,6 +1066,9 @@ function render(){
 
 function tabBtn(key,label){
   return '<button class="tabbtn'+(state.activeTab===key?" active":"")+'" data-tab="'+key+'">'+esc(label)+'</button>';
+}
+function pacingTabBtn(key,label){
+  return '<button class="tabbtn'+(state.pacingSubTab===key?" active":"")+'" data-pacingtab="'+key+'">'+esc(label)+'</button>';
 }
 
 function appPanelControls(ai, osFilter){
@@ -1302,11 +1319,18 @@ function distinctChannelsForAppOSDaily(appIdx, osFilter){
   }
   return [...present].sort(function(a,b){ return CHANNELS[a]<CHANNELS[b]?-1:(CHANNELS[a]>CHANNELS[b]?1:0); });
 }
-function renderPacing(){
+function renderPacingOverallTab(){
   var out = '<div class="panel" style="margin-bottom:14px;"><div class="panel-head"><h2>Pacing — Overall</h2></div></div>';
   out += '<div class="panel" style="margin-bottom:18px;">'+renderPacingTable("overall", null, "all", null)+'</div>';
-
-  out += '<div class="panel" style="margin-bottom:14px;"><div class="panel-head"><h2>Pacing — by Game / OS / Channel</h2></div></div>';
+  return out;
+}
+// Mirrors the "Rewarded Channels Tracker" spreadsheet's own layout: one section per Game+OS
+// (matching that spreadsheet's one-tab-per-game-per-OS structure), each showing a combined
+// pacing table for ALL its channels together first — the equivalent of that sheet's own
+// "Overall" row per tab — with individual channels available to drill into below it, same as
+// expanding a channel already showed its own scoped table.
+function renderPacingGameOsTab(){
+  var out = '<div class="panel" style="margin-bottom:14px;"><div class="panel-head"><h2>Pacing — by Game &amp; OS</h2></div></div>';
   out += '<div class="panel"><table class="dt"><tbody>';
   APPS.forEach(function(app, ai){
     var gameKey = "pacing:game:"+ai;
@@ -1324,6 +1348,7 @@ function renderPacing(){
           '<button class="disclose'+(osOpen?" open":"")+'" data-toggle="'+osKey+'">▶</button>'+
           '<span class="namelabel">'+(os==="android"?"Android":"iOS")+'</span></div></td></tr>';
         if(osOpen){
+          out += '<tr class="lvl-period"><td style="padding:10px 0 16px;">'+renderPacingTable(osKey, ai, os, null)+'</td></tr>';
           channels.forEach(function(ci){
             var chKey = osKey+":ch:"+ci;
             var chOpen = state.expanded.has(chKey);
@@ -1441,8 +1466,14 @@ function bootUI(){
   });
 
   document.getElementById("tabbar-slot").addEventListener("click", function(e){
-    var btn = e.target.closest("[data-tab]"); if(!btn) return;
-    state.activeTab = btn.getAttribute("data-tab"); render();
+    var btn = e.target.closest("[data-tab]");
+    if(btn){ state.activeTab = btn.getAttribute("data-tab"); render(); return; }
+    var pbtn = e.target.closest("[data-pacingtab]");
+    if(pbtn){ state.pacingSubTab = pbtn.getAttribute("data-pacingtab"); render(); return; }
+  });
+  document.getElementById("sidebar-slot").addEventListener("click", function(e){
+    var sbtn = e.target.closest("[data-section]"); if(!sbtn) return;
+    state.section = sbtn.getAttribute("data-section"); render();
   });
 
   document.getElementById("app").addEventListener("click", function(e){

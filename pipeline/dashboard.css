@@ -56,7 +56,22 @@ button{ font-family:inherit; }
 @media (prefers-reduced-motion:reduce){ *{ animation-duration:.001ms !important; transition-duration:.001ms !important; } }
 
 /* ---------- shell ---------- */
-.shell{ max-width:1520px; margin:0 auto; padding:0 20px 140px; }
+.shell{ max-width:1520px; margin:0 auto; padding:0 20px 140px; display:flex; gap:20px; align-items:flex-start; }
+.shell #app{ flex:1; min-width:0; }
+
+/* ---------- sidebar (Performance / Pacing sections) ---------- */
+.sidebar{
+  flex:none; width:168px; position:sticky; top:132px; display:flex; flex-direction:column; gap:4px;
+  padding:14px 0;
+}
+.sidebar-btn{
+  display:flex; align-items:center; gap:8px; text-align:left; border:1px solid transparent; background:transparent;
+  color:var(--ink-soft); font-family:var(--font-display); font-weight:700; font-size:.86rem;
+  padding:10px 12px; border-radius:var(--radius-sm); cursor:pointer; width:100%;
+}
+.sidebar-btn:hover{ background:var(--surface-2); color:var(--ink); }
+.sidebar-btn.active{ background:var(--accent-soft); color:var(--accent); border-color:var(--accent-soft-line); }
+.sidebar-btn .icon{ font-size:1rem; flex:none; }
 
 .topbar{
   position:sticky; top:0; z-index:40; background:var(--paper);

@@ -1329,41 +1329,62 @@ function renderPacingOverallTab(){
 // pacing table for ALL its channels together first — the equivalent of that sheet's own
 // "Overall" row per tab — with individual channels available to drill into below it, same as
 // expanding a channel already showed its own scoped table.
+// A <table> with "auto" column sizing lets a <td> just grow to fit whatever's inside it —
+// including a wide embedded pacing table — instead of constraining it, which silently defeats
+// that pacing table's own .table-scroll (it never needs to scroll because its "container" grew
+// to match it). So the outline is built as a SEQUENCE of pieces instead of one continuous table:
+// plain outline rows are batched into their own <table>, and each embedded pacing table is
+// inserted as an ordinary sibling <div> — never inside a table cell — so it sizes against the
+// panel/page width like every other pacing table already does, and actually scrolls.
+function renderPacingOutline(buildFn){
+  var pieces = [];
+  var rowsBuf = [];
+  function flushRows(){ if(rowsBuf.length){ pieces.push({rows: rowsBuf.join("")}); rowsBuf = []; } }
+  var api = {
+    row: function(html){ rowsBuf.push(html); },
+    embed: function(html){ flushRows(); pieces.push({embed: html}); },
+  };
+  buildFn(api);
+  flushRows();
+  return pieces.map(function(p){
+    return p.rows!=null
+      ? '<div class="panel"><table class="dt"><tbody>'+p.rows+'</tbody></table></div>'
+      : '<div class="panel" style="margin-bottom:18px;">'+p.embed+'</div>';
+  }).join("");
+}
 function renderPacingGameOsTab(){
   var out = '<div class="panel" style="margin-bottom:14px;"><div class="panel-head"><h2>Pacing — by Game &amp; OS</h2></div></div>';
-  out += '<div class="panel"><table class="dt"><tbody>';
-  APPS.forEach(function(app, ai){
-    var gameKey = "pacing:game:"+ai;
-    var gameOpen = state.expanded.has(gameKey);
-    out += '<tr class="lvl-channel"><td class="namecell"><div class="namewrap indent-0">'+
-      '<button class="disclose'+(gameOpen?" open":"")+'" data-toggle="'+gameKey+'">▶</button>'+
-      '<span class="namelabel">'+esc(app)+'</span></div></td></tr>';
-    if(gameOpen){
-      ["android","ios"].forEach(function(os){
-        var channels = distinctChannelsForAppOSDaily(ai, os);
-        if(channels.length===0) return;
-        var osKey = gameKey+":os:"+os;
-        var osOpen = state.expanded.has(osKey);
-        out += '<tr class="lvl-campaign"><td class="namecell"><div class="namewrap indent-1">'+
-          '<button class="disclose'+(osOpen?" open":"")+'" data-toggle="'+osKey+'">▶</button>'+
-          '<span class="namelabel">'+(os==="android"?"Android":"iOS")+'</span></div></td></tr>';
-        if(osOpen){
-          out += '<tr class="lvl-period"><td style="padding:10px 0 16px;">'+renderPacingTable(osKey, ai, os, null)+'</td></tr>';
-          channels.forEach(function(ci){
-            var chKey = osKey+":ch:"+ci;
-            var chOpen = state.expanded.has(chKey);
-            out += '<tr class="lvl-period"><td class="namecell"><div class="namewrap indent-2">'+
-              '<button class="disclose'+(chOpen?" open":"")+'" data-toggle="'+chKey+'">▶</button>'+
-              '<span class="namelabel">'+esc(CHANNELS[ci])+'</span></div></td></tr>';
-            if(chOpen){
-              out += '<tr class="lvl-day"><td style="padding:10px 0 16px;">'+renderPacingTable(chKey, ai, os, ci)+'</td></tr>';
-            }
-          });
-        }
-      });
-    }
+  out += renderPacingOutline(function(o){
+    APPS.forEach(function(app, ai){
+      var gameKey = "pacing:game:"+ai;
+      var gameOpen = state.expanded.has(gameKey);
+      o.row('<tr class="lvl-channel"><td class="namecell"><div class="namewrap indent-0">'+
+        '<button class="disclose'+(gameOpen?" open":"")+'" data-toggle="'+gameKey+'">▶</button>'+
+        '<span class="namelabel">'+esc(app)+'</span></div></td></tr>');
+      if(gameOpen){
+        ["android","ios"].forEach(function(os){
+          var channels = distinctChannelsForAppOSDaily(ai, os);
+          if(channels.length===0) return;
+          var osKey = gameKey+":os:"+os;
+          var osOpen = state.expanded.has(osKey);
+          o.row('<tr class="lvl-campaign"><td class="namecell"><div class="namewrap indent-1">'+
+            '<button class="disclose'+(osOpen?" open":"")+'" data-toggle="'+osKey+'">▶</button>'+
+            '<span class="namelabel">'+(os==="android"?"Android":"iOS")+'</span></div></td></tr>');
+          if(osOpen){
+            o.embed(renderPacingTable(osKey, ai, os, null));
+            channels.forEach(function(ci){
+              var chKey = osKey+":ch:"+ci;
+              var chOpen = state.expanded.has(chKey);
+              o.row('<tr class="lvl-period"><td class="namecell"><div class="namewrap indent-2">'+
+                '<button class="disclose'+(chOpen?" open":"")+'" data-toggle="'+chKey+'">▶</button>'+
+                '<span class="namelabel">'+esc(CHANNELS[ci])+'</span></div></td></tr>');
+              if(chOpen) o.embed(renderPacingTable(chKey, ai, os, ci));
+            });
+          }
+        });
+      }
+    });
   });
-  out += '</tbody></table></div>';
   return out;
 }
 

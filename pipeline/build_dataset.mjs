@@ -11,8 +11,8 @@ const CHANNELS = [
   "Mistplay", "Play2Pay", "Playback Rewards", "Playio", "Pogo", "Prodege",
   "Tapjoy", "TaurusX", "Tyrads", "Tyrads New", "benjamin", "exmox",
 ];
-const RD = [0, 1, 3, 7, 14, 21, 30];
-const RT = [1, 3, 7, 14, 21, 30];
+const RD = [0, 1, 3, 7, 14, 21, 30, 45, 60];
+const RT = [1, 3, 7, 14, 21, 30, 45, 60];
 
 const appIdx = Object.fromEntries(APPS.map((a, i) => [a, i]));
 const chIdx = Object.fromEntries(CHANNELS.map((c, i) => [c, i]));
@@ -70,16 +70,16 @@ for (const r of rows) {
     merged.set(key, {
       ai: r.ai, os: r.os, ci: r.ci, campIdx: r.campIdx, wi,
       installs: 0, cost: 0,
-      roasRev: [0, 0, 0, 0, 0, 0, 0],
-      ltvRev: [0, 0, 0, 0, 0, 0, 0],
-      ret: [0, 0, 0, 0, 0, 0],
+      roasRev: new Array(RD.length).fill(0),
+      ltvRev: new Array(RD.length).fill(0),
+      ret: new Array(RT.length).fill(0),
     });
   }
   const m = merged.get(key);
   m.installs += r.installs;
   m.cost += r.cost;
-  for (let i = 0; i < 7; i++) { m.roasRev[i] += r.roasRev[i]; m.ltvRev[i] += r.ltvRev[i]; }
-  for (let i = 0; i < 6; i++) m.ret[i] += r.ret[i];
+  for (let i = 0; i < RD.length; i++) { m.roasRev[i] += r.roasRev[i]; m.ltvRev[i] += r.ltvRev[i]; }
+  for (let i = 0; i < RT.length; i++) m.ret[i] += r.ret[i];
 }
 
 const compactRows = [...merged.values()].map(m => [
@@ -163,16 +163,16 @@ for (const r of dayCohortRows) {
     dayCohortMerged.set(key, {
       ai: r.ai, os: r.os, ci: r.ci, campIdx: r.campIdx, di: r.di,
       installs: 0, cost: 0,
-      roasRev: [0, 0, 0, 0, 0, 0, 0],
-      ltvRev: [0, 0, 0, 0, 0, 0, 0],
-      ret: [0, 0, 0, 0, 0, 0],
+      roasRev: new Array(RD.length).fill(0),
+      ltvRev: new Array(RD.length).fill(0),
+      ret: new Array(RT.length).fill(0),
     });
   }
   const m = dayCohortMerged.get(key);
   m.installs += r.installs;
   m.cost += r.cost;
-  for (let i = 0; i < 7; i++) { m.roasRev[i] += r.roasRev[i]; m.ltvRev[i] += r.ltvRev[i]; }
-  for (let i = 0; i < 6; i++) m.ret[i] += r.ret[i];
+  for (let i = 0; i < RD.length; i++) { m.roasRev[i] += r.roasRev[i]; m.ltvRev[i] += r.ltvRev[i]; }
+  for (let i = 0; i < RT.length; i++) m.ret[i] += r.ret[i];
 }
 
 const compactDayCohort = [...dayCohortMerged.values()].map(m => [

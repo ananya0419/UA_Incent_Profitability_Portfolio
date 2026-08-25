@@ -5,8 +5,8 @@
 import { writeFileSync } from "fs";
 import { APPS, RAW_NETWORKS, CHANNEL_MAP, AD_REVENUE_SOURCES, DATE_PERIOD, fetchJSON } from "./common.mjs";
 
-const RD = [0, 1, 3, 7, 14, 21, 30];
-const RT = [1, 3, 7, 14, 21, 30];
+const RD = [0, 1, 3, 7, 14, 21, 30, 45, 60];
+const RT = [1, 3, 7, 14, 21, 30, 45, 60];
 
 const metrics = [
   "installs", "cost", "ad_revenue",

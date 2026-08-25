@@ -6,8 +6,8 @@
 // applyDataset()/bootUI() below are split so both paths work without duplicating the file.
 // Fixed cohort-day schema — always this exact shape by construction (see build_dataset.mjs),
 // not derived per-dataset, so these are safe to use at module-eval time before any data arrives.
-var RD = [0, 1, 3, 7, 14, 21, 30];
-var RT = [1, 3, 7, 14, 21, 30];
+var RD = [0, 1, 3, 7, 14, 21, 30, 45, 60];
+var RT = [1, 3, 7, 14, 21, 30, 45, 60];
 
 var DATA, WEEKS, DAYS, CHANNELS, APPS, CAMPAIGNS, ROWS, DAILY, DAYCOHORT,
   DATA_END, DATA_START, DATA_END_STR, DATA_START_STR;
@@ -29,8 +29,10 @@ function applyDataset(dataset){
 }
 if (window.__DASHBOARD_DATA__) applyDataset(window.__DASHBOARD_DATA__);
 
-// weekly-cohort row field indices
-var F_AI=0,F_OS=1,F_CI=2,F_CAMP=3,F_WI=4,F_INS=5,F_COST=6,F_RR=7,F_LR=14,F_RT=21;
+// weekly-cohort row field indices — F_LR/F_RT derived from RD.length rather than hardcoded, so
+// this can't silently desync if the cohort-day schema changes again (see build_dataset.mjs).
+var F_AI=0,F_OS=1,F_CI=2,F_CAMP=3,F_WI=4,F_INS=5,F_COST=6,F_RR=7;
+var F_LR=F_RR+RD.length, F_RT=F_LR+RD.length;
 // daily-actuals row field indices
 var D_AI=0,D_OS=1,D_CI=2,D_CAMP=3,D_DI=4,D_INS=5,D_COST=6,D_REV=7;
 
@@ -275,6 +277,8 @@ function computeRunRate(appIdx, osFilter, ci, campIdx, winStart, winEnd){
 // verdict badge: D30 ad RoAS — observed when the cohort has fully matured, otherwise
 // the same D30 figure treated as an in-progress estimate (still ticking up toward its final value).
 var D30_IDX = RD.indexOf(30);
+var D45_IDX = RD.indexOf(45);
+var D60_IDX = RD.indexOf(60);
 function d30Verdict(d){
   var v = d.roas[D30_IDX];
   if(d.installs<=0 || d.cost<=0 || v==null) return { verdict:"nodata", value:null, mature:false, predicted:false };
@@ -330,18 +334,19 @@ function basicAndRoasCellsHTML(d){
   }
   return out;
 }
-// Separate column, immediately after the actual D30 cell: shows only what's being projected
-// (chained via the RoAS-multiplier row), never mixed into the actual/observed D30 figure above.
-function predictedCellHTML(d, predictedD30){
-  var cls = "col-predict num grpstart";
-  if(d.roasMature[D30_IDX]){
-    var actual = d.roas[D30_IDX];
+// One column per predicted target day (D30, D45, D60), immediately after the actual RoAS cells:
+// shows only what's being projected (chained via the RoAS-multiplier row), never mixed into the
+// actual/observed figure for that same day.
+function predictedCellHTML(d, predictedValue, targetIdx, targetDay, grpstart){
+  var cls = "col-predict num"+(grpstart?" grpstart":"");
+  if(d.roasMature[targetIdx]){
+    var actual = d.roas[targetIdx];
     var avc = cellVerdict(actual);
-    return '<td class="'+cls+'"><span class="cell-tint '+(avc?tintClass(avc):'')+'" title="D30 already observed — matches the actual RoAS · D30 column">'+fmtPct1(actual)+'</span></td>';
+    return '<td class="'+cls+'"><span class="cell-tint '+(avc?tintClass(avc):'')+'" title="D'+targetDay+' already observed — matches the actual RoAS · D'+targetDay+' column">'+fmtPct1(actual)+'</span></td>';
   }
-  if(predictedD30==null) return '<td class="'+cls+'"><span class="dash" title="Not enough mature history yet to chain a prediction">—</span></td>';
-  var vc = cellVerdict(predictedD30);
-  return '<td class="'+cls+'"><span class="cell-tint predict-cell '+tintClass(vc)+'" title="Predicted D30 ad RoAS, chained from the last observed day via the RoAS Multiplier row">≈ '+fmtPct1(predictedD30)+'</span></td>';
+  if(predictedValue==null) return '<td class="'+cls+'"><span class="dash" title="Not enough mature history yet to chain a prediction">—</span></td>';
+  var vc = cellVerdict(predictedValue);
+  return '<td class="'+cls+'"><span class="cell-tint predict-cell '+tintClass(vc)+'" title="Predicted D'+targetDay+' ad RoAS, chained from the last observed day via the RoAS Multiplier row">≈ '+fmtPct1(predictedValue)+'</span></td>';
 }
 function retAndLtvCellsHTML(d){
   var out = "";
@@ -361,8 +366,12 @@ function retAndLtvCellsHTML(d){
   }
   return out;
 }
-function metricCellsHTML(d, predictedD30, hops){
-  return basicAndRoasCellsHTML(d) + predictedCellHTML(d, predictedD30) + multiplierCellsHTML(hops||null) + retAndLtvCellsHTML(d);
+function metricCellsHTML(d, predictedD30, hops, predictedD45, predictedD60){
+  return basicAndRoasCellsHTML(d)
+    + predictedCellHTML(d, predictedD30, D30_IDX, 30, true)
+    + predictedCellHTML(d, predictedD45, D45_IDX, 45, false)
+    + predictedCellHTML(d, predictedD60, D60_IDX, 60, false)
+    + multiplierCellsHTML(hops||null) + retAndLtvCellsHTML(d);
 }
 
 /* ---------------- RoAS multipliers + D30 prediction ---------------- */
@@ -371,19 +380,23 @@ var HOPS = [];
 for(var _h=0; _h<RD.length-1; _h++) HOPS.push([_h, _h+1]);
 var HOP_LABELS = HOPS.map(function(h){ return "D"+RD[h[0]]+"→D"+RD[h[1]]; });
 
-// Chains forward from the last observed (mature) RoAS day to D30 using one multiplier value
-// per remaining hop. Returns null if D30 is unreachable (no mature day at all, or a gap in hops).
-function chainPredictedD30(d, hops){
+// Chains forward from the last observed (mature) RoAS day to any target cohort day using one
+// multiplier value per remaining hop. Returns null if the target is unreachable (no mature day
+// at all, or a gap in hops before reaching it).
+function chainPredictedTo(d, hops, targetIdx){
   if(d.bestIdx < 0 || d.installs<=0 || d.cost<=0) return null;
-  if(d.bestIdx >= RD.length-1) return d.roas[RD.length-1]; // D30 already mature, nothing to chain
+  if(d.bestIdx >= targetIdx) return d.roas[targetIdx]; // already mature at/past target, nothing to chain
   var val = d.bestRoas;
-  for(var k=d.bestIdx; k<HOPS.length; k++){
+  for(var k=d.bestIdx; k<targetIdx; k++){
     var hv = hops[k].value;
     if(hv==null) return null;
     val = val * hv;
   }
   return val;
 }
+function chainPredictedD30(d, hops){ return chainPredictedTo(d, hops, D30_IDX); }
+function chainPredictedD45(d, hops){ return chainPredictedTo(d, hops, D45_IDX); }
+function chainPredictedD60(d, hops){ return chainPredictedTo(d, hops, D60_IDX); }
 
 // Walks a chronological list of {d:...} period objects once, resolving each hop for each
 // period to: a user override, else its own observed multiplier if that hop is mature for this
@@ -421,6 +434,8 @@ function computePeriodMultipliers(periods, seriesKey){
     });
     p.hops = hops;
     p.predictedD30 = chainPredictedD30(d, hops);
+    p.predictedD45 = chainPredictedD45(d, hops);
+    p.predictedD60 = chainPredictedD60(d, hops);
   });
   return periods;
 }
@@ -554,7 +569,7 @@ function tableHeadHTML(){
   h += '<th colspan="2"></th>';
   h += '<th colspan="3">Volume</th>';
   h += '<th colspan="'+RD.length+'" class="col-roas grpstart">RoAS · Ad (cohort, actual)</th>';
-  h += '<th colspan="1" class="col-predict grpstart">Predicted</th>';
+  h += '<th colspan="3" class="col-predict grpstart">Predicted</th>';
   h += '<th colspan="'+HOPS.length+'" class="col-mult grpstart">RoAS Multiplier (editable)</th>';
   h += '<th colspan="'+RT.length+'" class="col-ret grpstart">Retention</th>';
   h += '<th colspan="'+RD.length+'" class="col-ltv grpstart">LTV · Ad ($, cohort)</th>';
@@ -569,6 +584,8 @@ function tableHeadHTML(){
   h += sortTh("Spend","spend","col-basic");
   for(var i=0;i<RD.length;i++) h += sortTh("D"+RD[i], "roas_"+RD[i], "col-roas"+(i===0?" grpstart":""));
   h += sortTh("D30 (pred.)", "predicted", "col-predict grpstart");
+  h += '<th class="col-predict">D45 (pred.)</th>';
+  h += '<th class="col-predict">D60 (pred.)</th>';
   for(var i=0;i<HOPS.length;i++) h += '<th class="col-mult'+(i===0?" grpstart":"")+'">'+HOP_LABELS[i]+'</th>';
   for(var i=0;i<RT.length;i++) h += sortTh("D"+RT[i], "ret_"+RT[i], "col-ret"+(i===0?" grpstart":""));
   for(var i=0;i<RD.length;i++) h += sortTh("D"+RD[i], "ltv_"+RD[i], "col-ltv"+(i===0?" grpstart":""));
@@ -642,7 +659,7 @@ function renderAppTable(appIdx, osFilter){
     var d = deriveCohortMetrics(aggregateRows(leafRows(appIdx, osFilter, ci, null)));
     var status = computeStatus3d(appIdx, osFilter, ci, null, state.rangeStart, state.rangeEnd);
     var hops = computeRollupMultipliers(appIdx, osFilter, ci, null);
-    return { ci:ci, d:d, status:status, hops:hops, predictedD30: chainPredictedD30(d, hops), verdictD: computeVerdictBasis(appIdx, osFilter, ci, null) };
+    return { ci:ci, d:d, status:status, hops:hops, predictedD30: chainPredictedD30(d, hops), predictedD45: chainPredictedD45(d, hops), predictedD60: chainPredictedD60(d, hops), verdictD: computeVerdictBasis(appIdx, osFilter, ci, null) };
   });
   channelObjs.sort(function(a,b){ return b.d.cost - a.d.cost; }); // default order
   sortRowsPinLive(channelObjs); // Live channels always first; column sort (if any) applies within each group
@@ -663,7 +680,7 @@ function renderAppTable(appIdx, osFilter){
       '</div></td>'+
       '<td>'+statusBadgeHTML(chStatus)+'</td>'+
       '<td>'+verdictBadgeHTML(co.verdictD, chStatus, null)+'</td>'+
-      metricCellsHTML(d, co.predictedD30, co.hops)+
+      metricCellsHTML(d, co.predictedD30, co.hops, co.predictedD45, co.predictedD60)+
       '<td class="dash">—</td>'+
     '</tr>');
     if(open){
@@ -672,7 +689,7 @@ function renderAppTable(appIdx, osFilter){
         var cd = deriveCohortMetrics(aggregateRows(leafRows(appIdx, osFilter, ci, campIdx)));
         var cStatus = computeStatus3d(appIdx, osFilter, ci, campIdx, state.rangeStart, state.rangeEnd);
         var chops = computeRollupMultipliers(appIdx, osFilter, ci, campIdx);
-        return { campIdx:campIdx, d:cd, status:cStatus, hops:chops, predictedD30: chainPredictedD30(cd, chops), verdictD: computeVerdictBasis(appIdx, osFilter, ci, campIdx) };
+        return { campIdx:campIdx, d:cd, status:cStatus, hops:chops, predictedD30: chainPredictedD30(cd, chops), predictedD45: chainPredictedD45(cd, chops), predictedD60: chainPredictedD60(cd, chops), verdictD: computeVerdictBasis(appIdx, osFilter, ci, campIdx) };
       });
       campObjs.sort(function(a,b){ return b.d.cost - a.d.cost; });
       sortRowsPinLive(campObjs); // Live campaigns always first; column sort (if any) applies within each group
@@ -690,13 +707,13 @@ function renderAppTable(appIdx, osFilter){
           '</div></td>'+
           '<td>'+statusBadgeHTML(cStatus)+'</td>'+
           '<td>'+verdictBadgeHTML(co2.verdictD, cStatus, null)+'</td>'+
-          metricCellsHTML(cd, co2.predictedD30, co2.hops)+
+          metricCellsHTML(cd, co2.predictedD30, co2.hops, co2.predictedD45, co2.predictedD60)+
           '<td class="dash">—</td>'+
         '</tr>');
         if(copen){
           var periods = buildPeriods(appIdx, osFilter, ci, campIdx);
           var periodObjs = periods.map(function(p){
-            return { p:p, d:p.d, status: computeStatus3d(appIdx, osFilter, ci, campIdx, p.winStart, p.winEnd), predictedD30: p.predictedD30 };
+            return { p:p, d:p.d, status: computeStatus3d(appIdx, osFilter, ci, campIdx, p.winStart, p.winEnd), predictedD30: p.predictedD30, predictedD45: p.predictedD45, predictedD60: p.predictedD60 };
           });
           // periods always stay chronological — column sorting never reorders weeks/months (unlike
           // channel/campaign rows), since a shuffled timeline defeats the point of a trend view.
@@ -718,14 +735,14 @@ function renderAppTable(appIdx, osFilter){
               '</div></td>'+
               '<td>'+statusBadgeHTML(pStatus)+'</td>'+
               '<td>'+verdictBadgeHTML(p.d, pStatus, p.predictedD30)+'</td>'+
-              metricCellsHTML(p.d, p.predictedD30, p.hops)+
+              metricCellsHTML(p.d, p.predictedD30, p.hops, p.predictedD45, p.predictedD60)+
               '<td>'+trendHTML(p.d, prev)+'</td>'+
             '</tr>');
             prev = p.d;
             if(dayOpen){
               var dayPeriods = buildDayPeriods(appIdx, osFilter, ci, campIdx, p.winStart, p.winEnd);
               var dayObjs = dayPeriods.map(function(dp){
-                return { p:dp, d:dp.d, status: computeStatus3d(appIdx, osFilter, ci, campIdx, dp.winStart, dp.winEnd), predictedD30: dp.predictedD30 };
+                return { p:dp, d:dp.d, status: computeStatus3d(appIdx, osFilter, ci, campIdx, dp.winStart, dp.winEnd), predictedD30: dp.predictedD30, predictedD45: dp.predictedD45, predictedD60: dp.predictedD60 };
               });
               // same rule as periods: days always stay chronological, never sorted by a column.
               var dprev = null;
@@ -740,7 +757,7 @@ function renderAppTable(appIdx, osFilter){
                   '</div></td>'+
                   '<td>'+statusBadgeHTML(dStatus)+'</td>'+
                   '<td>'+verdictBadgeHTML(dp.d, dStatus, dp.predictedD30)+'</td>'+
-                  metricCellsHTML(dp.d, dp.predictedD30, dp.hops)+
+                  metricCellsHTML(dp.d, dp.predictedD30, dp.hops, dp.predictedD45, dp.predictedD60)+
                   '<td>'+trendHTML(dp.d, dprev)+'</td>'+
                 '</tr>');
                 dprev = dp.d;

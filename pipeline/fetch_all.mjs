@@ -1,8 +1,8 @@
 import { writeFileSync } from "fs";
 import { APPS, RAW_NETWORKS, CHANNEL_MAP, AD_REVENUE_SOURCES, DATE_PERIOD, fetchJSON } from "./common.mjs";
 
-const RD = [0, 1, 3, 7, 14, 21, 30]; // roas / ltv cohort days
-const RT = [1, 3, 7, 14, 21, 30]; // retention cohort days
+const RD = [0, 1, 3, 7, 14, 21, 30, 45, 60]; // roas / ltv cohort days
+const RT = [1, 3, 7, 14, 21, 30, 45, 60]; // retention cohort days
 
 const metrics = [
   "installs", "cost", "ad_revenue",

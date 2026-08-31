@@ -11,6 +11,7 @@ const APPS = [
 
 const CHANNEL_MAP = {
   "App Samurai": "App Samurai",
+  "BigTreeAds": "BigTreeAds",
   "CashCow": "Cashcow",
   "Edge226": "Edge226",
   "Influence Mobile": "Influence Mobile",

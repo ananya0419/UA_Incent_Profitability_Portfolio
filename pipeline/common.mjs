@@ -23,7 +23,7 @@ export const APPS = [
 ];
 
 export const RAW_NETWORKS = [
-  "App Samurai", "CashCow", "Edge226", "Influence Mobile", "KashKick", "KickCash",
+  "App Samurai", "BigTreeAds", "CashCow", "Edge226", "Influence Mobile", "KashKick", "KickCash",
   "Mistplay", "Play2pay", "Play2Pay", "PlaybackRewards", "Playback Rewards", "Playio",
   "Pogo", "Prodege", "Tapjoy", "Tapjoy (Ad Spend)", "tapjoy_daily_rewards",
   "TaurusX", "Tyrads", "tyrads_new", "Benjamin", "Exmox",
@@ -31,6 +31,7 @@ export const RAW_NETWORKS = [
 
 export const CHANNEL_MAP = {
   "App Samurai": "App Samurai",
+  "BigTreeAds": "BigTreeAds",
   "CashCow": "Cashcow",
   "Edge226": "Edge226",
   "Influence Mobile": "Influence Mobile",

@@ -10,7 +10,7 @@ const rawDailyCohort = fetchAllDailyCohort.data;
 
 const APPS = ["Nova Solitaire", "Nut Sort", "Seek & Find", "Zen Solitaire"];
 const CHANNELS = [
-  "App Samurai", "Cashcow", "Edge226", "Influence Mobile", "KashKick", "Kickcash",
+  "App Samurai", "BigTreeAds", "Cashcow", "Edge226", "Influence Mobile", "KashKick", "Kickcash",
   "Mistplay", "Play2Pay", "Playback Rewards", "Playio", "Pogo", "Prodege",
   "Tapjoy", "TaurusX", "Tyrads", "Tyrads New", "benjamin", "exmox",
 ];
